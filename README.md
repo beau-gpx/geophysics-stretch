@@ -44,6 +44,18 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
 - Changing the limits rebuilds an unedited preset, or stretches a hand-edited curve to the
   new range while keeping its shape.
 
+## Advanced: mirror about centre
+Open the collapsed **Advanced** box and tick **Mirror about centre** to keep the stretch
+symmetric about a centre value. This suits grids that straddle zero, such as magnetic 1VD.
+- The centre (default 0; **0** and **Median** buttons) sits at the middle of the colour ramp.
+  Equal positive and negative values get mirrored colours.
+- Presets work on distance from the centre, e.g. Hist. equalise equalises |value − centre|.
+- Adding, moving, merging or deleting a node on one side does the same on the other. The
+  centre node is fixed.
+- Clip limits become centre ± R. In Percentile mode, R is the Upper percentile of
+  |value − centre|, and Lower is not used.
+- Points step by two, since a mirrored curve always has a centre node.
+
 ## Colour and saving
 - **Colour ramp:** any QGIS ramp (default is an ER Mapper-like pseudocolour); invert it from
   the button's menu.

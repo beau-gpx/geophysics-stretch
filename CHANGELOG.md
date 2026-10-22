@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5 — 2026-10-22
+- **Mirror about centre** (in a collapsed Advanced box): symmetric stretch about a centre
+  value (0 or median by one click) for grids like 1VD. Presets on distance from centre,
+  mirrored node editing, centre pinned mid-ramp, clip limits centre ± R.
+
 ## v1.4.1 — 2026-10-22
 - Fix: opening the plugin (or switching grids, including via Layers panel sync) no longer
   restyles the layer. Its current stretch is kept until you edit the curve, pick a preset,

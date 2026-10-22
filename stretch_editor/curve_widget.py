@@ -69,6 +69,7 @@ class CurveWidget(QWidget):
         self.lut = None            # list of QColor
         self.log_hist = False
         self.axis = stretch.LinearAxis()
+        self.centre = None         # mirror mode: curve kept symmetric about this value
         self.sel = -1
         self.drag = -1
         self.merge_with = -1
@@ -132,17 +133,58 @@ class CurveWidget(QWidget):
     def set_node(self, i, x=None, y=None):
         if not (0 <= i < len(self.nodes)):
             return
+        if self._is_centre(i):
+            x = y = None               # the centre node is pinned in mirror mode
         if x is not None:
             self.nodes[i][0] = self._clamp_x(i, x)
         if y is not None:
             self.nodes[i][1] = min(1.0, max(0.0, y))
+        self.sel = self._remirror(i)
         self.update()
         self.curveChanged.emit()
         self.curveEdited.emit()
 
+    # ---------- mirror mode ----------
+    def set_mirror(self, centre):
+        """centre = value to mirror about, or None to turn mirroring off."""
+        self.centre = None if centre is None else float(centre)
+        self.update()
+
+    def _is_centre(self, i):
+        if self.centre is None or not (0 <= i < len(self.nodes)):
+            return False
+        span = (self.hi - self.lo) or 1.0
+        return abs(self.nodes[i][0] - self.centre) <= span * 1e-9
+
+    def _remirror(self, i):
+        """After node i changed, rebuild the other side as its mirror. Returns i's new index."""
+        if self.centre is None or not (0 <= i < len(self.nodes)):
+            return i
+        c = self.centre
+        if self._is_centre(i):
+            self.nodes[i] = [c, 0.5]
+            side, x, y = 'pos', c, 0.5
+        else:
+            x, y = self.nodes[i]
+            side = 'pos' if x > c else 'neg'
+        new = stretch.mirror(self.nodes, c, side)
+        if new is None:
+            return i
+        self.nodes = new
+        return int(np.argmin([abs(nx - x) + abs(ny - y) for nx, ny in new]))
+
     def delete_node(self, i):
-        if 0 <= i < len(self.nodes) and len(self.nodes) > 2:
+        if self._is_centre(i):
+            return                     # the centre node stays in mirror mode
+        if 0 <= i < len(self.nodes) and len(self.nodes) > (3 if self.centre is not None else 2):
+            side = None
+            if self.centre is not None:
+                side = 'pos' if self.nodes[i][0] > self.centre else 'neg'
             del self.nodes[i]
+            if side:
+                new = stretch.mirror(self.nodes, self.centre, side)
+                if new is not None:
+                    self.nodes = new
             self.sel = -1
             self.selectionChanged.emit(-1)
             self.update()
@@ -193,13 +235,13 @@ class CurveWidget(QWidget):
 
     def _merge_candidate(self, i):
         """Neighbour of node i that is within MERGE px, or -1."""
-        if len(self.nodes) <= 2:
+        if len(self.nodes) <= (3 if self.centre is not None else 2) or self._is_centre(i):
             return -1
         pr = self._plot()
         px, py = self._node_px(i, pr)
         best, bd = -1, self.MERGE
         for j in (i - 1, i + 1):
-            if 0 <= j < len(self.nodes):
+            if 0 <= j < len(self.nodes) and not self._is_centre(j):
                 qx, qy = self._node_px(j, pr)
                 d = np.hypot(px - qx, py - qy)
                 if d <= bd:
@@ -284,6 +326,14 @@ class CurveWidget(QWidget):
                     p.setPen(QPen(self.lut[int(round(ys[k] * (nl - 1)))], 1))
                     p.drawLine(QPointF(pr.left() + k, sy), QPointF(pr.left() + k, sy + self.STRIP_H))
 
+            # centre line in mirror mode
+            if self.centre is not None and self.lo <= self.centre <= self.hi:
+                cx = self._v2px(self.centre, pr)
+                pen = QPen(QColor(120, 120, 120), 1)
+                pen.setStyle(E(Qt, 'PenStyle.DashLine'))
+                p.setPen(pen)
+                p.drawLine(QPointF(cx, pr.top()), QPointF(cx, pr.bottom()))
+
             # nodes (off-screen ones get an edge marker)
             for i in range(len(self.nodes)):
                 px, py = self._node_px(i, pr)
@@ -345,6 +395,7 @@ class CurveWidget(QWidget):
                 return
             i = int(np.searchsorted(xs, v))
             self.nodes.insert(i, [v, y])
+            i = self._remirror(i)
             self.curveChanged.emit()
         if i >= 0:
             self.sel = self.drag = i
@@ -361,8 +412,14 @@ class CurveWidget(QWidget):
             self.viewChanged.emit(self.lo, self.hi)
             return
         if self.drag >= 0:
+            if self._is_centre(self.drag):
+                self.hover = 'centre node is fixed in mirror mode'
+                self.update()
+                return
             v = self._clamp_x(self.drag, self._px2v(mx, pr))
             self.nodes[self.drag] = [v, self._py2y(my, pr)]
+            self.drag = self.sel = self._remirror(self.drag)
+            v = self.nodes[self.drag][0]
             self.merge_with = self._merge_candidate(self.drag)
             tip = '   release to merge' if self.merge_with >= 0 else ''
             self.hover = f"value {fmt(v)}   output {self.nodes[self.drag][1] * 100:.1f}%{tip}"
@@ -385,7 +442,7 @@ class CurveWidget(QWidget):
             self.drag = self.merge_with = -1
             if j >= 0:                       # merge: keep the dragged node, drop its neighbour
                 del self.nodes[j]
-                self.sel = i - 1 if j < i else i
+                self.sel = self._remirror(i - 1 if j < i else i)
                 self.selectionChanged.emit(self.sel)
                 self.update()
                 self.curveChanged.emit()

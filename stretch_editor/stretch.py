@@ -77,6 +77,46 @@ def preset_log(sample, lo, hi, n=25, k=100.0):
 PRESETS = {'linear': preset_linear, 'histeq': preset_histeq, 'log': preset_log}
 
 
+# ------------------------------------------------------------- mirror about a centre value
+def mirror_radius(sample, c, upper_pct=100.0):
+    """Half-width R of a symmetric clip: the upper percentile of |x - c|."""
+    d = np.abs(np.asarray(sample, float) - c)
+    r = float(np.percentile(d, min(100.0, max(0.0, upper_pct))))
+    if not r > 0:
+        r = float(np.max(d)) or 1.0
+    return r
+
+
+def symmetric_preset(kind, sample, c, r, n=33):
+    """Preset built on distance from c, mirrored: c -> 0.5 output, c+r -> 1, c-r -> 0."""
+    half = max(2, (int(n) + 2) // 2)                    # rounds the total up to an odd count
+    dist = np.abs(np.asarray(sample, float) - c)
+    pos = PRESETS[kind](dist, 0.0, r, half)           # nodes on 0..r, outputs 0..1
+    nodes = [[c + d, 0.5 + 0.5 * y] for d, y in pos if d > 0]
+    return mirror(nodes + [[c, 0.5]], c, 'pos')
+
+
+def mirror(nodes, c, side='pos'):
+    """Make a curve symmetric about c from one side ('pos' = values above c).
+    The centre is pinned at output 0.5. Returns None if that side has no nodes."""
+    if side == 'neg':
+        src = [[2 * c - x, 1.0 - y] for x, y in nodes if x < c]
+    else:
+        src = [[x, y] for x, y in nodes if x > c]
+    if not src:
+        return None
+    src = sorted(src)
+    neg = [[2 * c - x, 1.0 - y] for x, y in reversed(src)]
+    return sanitize(neg + [[c, 0.5]] + src)
+
+
+def is_symmetric(nodes, c, tol=1e-9):
+    xs = np.array([p[0] for p in nodes])
+    ys = np.array([p[1] for p in nodes])
+    return np.allclose(xs + xs[::-1], 2 * c, atol=tol * max(1.0, abs(c), np.ptp(xs))) and \
+        np.allclose(ys + ys[::-1], 1.0, atol=1e-9)
+
+
 # ------------------------------------------------------------- curve ops
 def evaluate(nodes, values):
     xs = np.array([n[0] for n in nodes], dtype=float)
