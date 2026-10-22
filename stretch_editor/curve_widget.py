@@ -1,18 +1,21 @@
 """Interactive histogram + transfer-curve editor (ER Mapper style).
 
-Left-click empty space  -> add a node (and drag it)
-Left-drag a node        -> move it
-Right-click a node      -> delete it (minimum two nodes)
+Left-click empty space        -> add a node (and drag it)
+Left-drag a node              -> move it (drop it onto a neighbour to merge)
+Right-click a node / Delete   -> remove it (minimum two nodes)
+Mouse wheel                   -> zoom the x-axis around the cursor
+Middle-drag or Shift+drag     -> pan the x-axis
+Ctrl+Z / Ctrl+Y               -> undo / redo (while the curve has focus)
 """
 import numpy as np
 
 try:
     from qgis.PyQt.QtCore import Qt, pyqtSignal, QPointF, QRectF, QEvent
-    from qgis.PyQt.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont
+    from qgis.PyQt.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont, QPolygonF
     from qgis.PyQt.QtWidgets import QWidget, QSizePolicy
 except ImportError:  # allows testing outside QGIS
     from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QEvent
-    from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont
+    from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont, QPolygonF
     from PyQt5.QtWidgets import QWidget, QSizePolicy
 
 from . import stretch
@@ -40,14 +43,17 @@ def fmt(v):
 
 
 class CurveWidget(QWidget):
-    curveChanged = pyqtSignal()        # fires continuously while dragging
-    curveEdited = pyqtSignal()         # fires when an edit is finished
+    curveChanged = pyqtSignal()           # fires continuously while dragging
+    curveEdited = pyqtSignal()            # fires when an edit is finished
     selectionChanged = pyqtSignal(int)
+    viewChanged = pyqtSignal(float, float)  # user zoomed/panned the x-axis
     undoRequested = pyqtSignal()
     redoRequested = pyqtSignal()
 
-    HIT = 8
+    HIT = 8          # px: grab radius for a node
+    MERGE = 7        # px: drop a node this close to a neighbour to merge them
     STRIP_H = 12
+    BINS = 256
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,19 +62,38 @@ class CurveWidget(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(E(Qt, 'FocusPolicy.StrongFocus'))
         self.nodes = []
+        self.sample = None
         self.counts = None
         self.lo, self.hi = 0.0, 1.0
-        self.lut = None            # list of QColor (256)
+        self.lut = None            # list of QColor
         self.log_hist = False
         self.sel = -1
         self.drag = -1
+        self.merge_with = -1
+        self.pan = None            # (start_px, lo, hi) while panning
         self.hover = ''
 
     # ---------- data ----------
-    def set_histogram(self, counts, lo, hi):
-        self.counts = counts
-        self.lo, self.hi = lo, hi
+    def set_sample(self, sample):
+        self.sample = sample
+        self._recount()
         self.update()
+
+    def set_view(self, lo, hi):
+        lo, hi = float(lo), float(hi)
+        if hi < lo:
+            lo, hi = hi, lo
+        if not hi > lo:
+            hi = lo + max(abs(lo) * 1e-6, 1e-9)
+        self.lo, self.hi = lo, hi
+        self._recount()
+        self.update()
+
+    def _recount(self):
+        if self.sample is None or self.sample.size == 0:
+            self.counts = None
+            return
+        self.counts, _ = np.histogram(self.sample, bins=self.BINS, range=(self.lo, self.hi))
 
     def set_nodes(self, nodes):
         self.nodes = stretch.sanitize(nodes)
@@ -88,13 +113,21 @@ class CurveWidget(QWidget):
         if not (0 <= i < len(self.nodes)):
             return
         if x is not None:
-            x = self._clamp_x(i, x)
-            self.nodes[i][0] = x
+            self.nodes[i][0] = self._clamp_x(i, x)
         if y is not None:
             self.nodes[i][1] = min(1.0, max(0.0, y))
         self.update()
         self.curveChanged.emit()
         self.curveEdited.emit()
+
+    def delete_node(self, i):
+        if 0 <= i < len(self.nodes) and len(self.nodes) > 2:
+            del self.nodes[i]
+            self.sel = -1
+            self.selectionChanged.emit(-1)
+            self.update()
+            self.curveChanged.emit()
+            self.curveEdited.emit()
 
     # ---------- geometry ----------
     def _plot(self):
@@ -121,13 +154,33 @@ class CurveWidget(QWidget):
             x = min(x, self.nodes[i + 1][0] - span)
         return x
 
+    def _node_px(self, i, pr):
+        x, y = self.nodes[i]
+        return self._v2px(x, pr), self._y2py(y, pr)
+
     def _hit(self, mx, my):
         pr = self._plot()
         best, bd = -1, self.HIT
-        for i, (x, y) in enumerate(self.nodes):
-            d = np.hypot(self._v2px(x, pr) - mx, self._y2py(y, pr) - my)
+        for i in range(len(self.nodes)):
+            px, py = self._node_px(i, pr)
+            d = np.hypot(px - mx, py - my)
             if d <= bd:
                 best, bd = i, d
+        return best
+
+    def _merge_candidate(self, i):
+        """Neighbour of node i that is within MERGE px, or -1."""
+        if len(self.nodes) <= 2:
+            return -1
+        pr = self._plot()
+        px, py = self._node_px(i, pr)
+        best, bd = -1, self.MERGE
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(self.nodes):
+                qx, qy = self._node_px(j, pr)
+                d = np.hypot(px - qx, py - qy)
+                if d <= bd:
+                    best, bd = j, d
         return best
 
     # ---------- painting ----------
@@ -138,6 +191,7 @@ class CurveWidget(QWidget):
         p.fillRect(self.rect(), pal.base())
         pr = self._plot()
         if pr.width() < 20 or pr.height() < 20:
+            p.end()
             return
         txt = pal.text().color()
         grid = QColor(txt)
@@ -158,8 +212,7 @@ class CurveWidget(QWidget):
             if self.log_hist:
                 c = np.log1p(c)
             m = c.max() if c.max() > 0 else 1.0
-            n = len(c)
-            bw = pr.width() / n
+            bw = pr.width() / len(c)
             hc = QColor(txt)
             hc.setAlpha(70)
             p.setPen(E(Qt, 'PenStyle.NoPen'))
@@ -169,11 +222,12 @@ class CurveWidget(QWidget):
                 if h > 0:
                     p.drawRect(QRectF(pr.left() + i * bw, pr.bottom() - h, bw + 0.5, h))
 
-        # curve
         if len(self.nodes) >= 2:
             w = int(pr.width())
             xs = self.lo + (np.arange(w + 1) / max(w, 1)) * (self.hi - self.lo)
             ys = stretch.evaluate(self.nodes, xs)
+
+            # curve
             path = QPainterPath()
             for k in range(len(xs)):
                 pt = QPointF(pr.left() + k, self._y2py(ys[k], pr))
@@ -186,19 +240,29 @@ class CurveWidget(QWidget):
             p.drawPath(path)
 
             # colour strip
-            sy = pr.bottom() + 4
             if self.lut:
+                sy = pr.bottom() + 4
                 nl = len(self.lut)
                 for k in range(w + 1):
-                    col = self.lut[int(round(ys[k] * (nl - 1)))]
-                    p.setPen(QPen(col, 1))
+                    p.setPen(QPen(self.lut[int(round(ys[k] * (nl - 1)))], 1))
                     p.drawLine(QPointF(pr.left() + k, sy), QPointF(pr.left() + k, sy + self.STRIP_H))
 
-            # nodes
-            for i, (x, y) in enumerate(self.nodes):
-                px, py = self._v2px(x, pr), self._y2py(y, pr)
-                if px < pr.left() - 4 or px > pr.right() + 4:
+            # nodes (off-screen ones get an edge marker)
+            for i in range(len(self.nodes)):
+                px, py = self._node_px(i, pr)
+                if px < pr.left() - 1 or px > pr.right() + 1:
+                    left = px < pr.left()
+                    ex = pr.left() + 1 if left else pr.right() - 1
+                    d = 7 if left else -7
+                    tri = QPolygonF([QPointF(ex, py), QPointF(ex + d, py - 5), QPointF(ex + d, py + 5)])
+                    p.setPen(QPen(QColor(30, 30, 30), 1))
+                    p.setBrush(QBrush(QColor(255, 160, 0)))
+                    p.drawPolygon(tri)
                     continue
+                if i == self.merge_with:
+                    p.setPen(QPen(QColor(200, 0, 0), 2))
+                    p.setBrush(E(Qt, 'BrushStyle.NoBrush'))
+                    p.drawEllipse(QPointF(px, py), 8, 8)
                 p.setPen(QPen(QColor(30, 30, 30), 1))
                 p.setBrush(QBrush(QColor(255, 160, 0) if i == self.sel else QColor(255, 255, 255)))
                 p.drawEllipse(QPointF(px, py), 4.5, 4.5)
@@ -217,22 +281,25 @@ class CurveWidget(QWidget):
         p.end()
 
     # ---------- mouse ----------
+    def _shift(self, ev):
+        return bool(ev.modifiers() & E(Qt, 'KeyboardModifier.ShiftModifier'))
+
     def mousePressEvent(self, ev):
+        mx, my = _pos(ev)
+        btn = ev.button()
+        if btn == E(Qt, 'MouseButton.MiddleButton') or (btn == E(Qt, 'MouseButton.LeftButton') and self._shift(ev)):
+            self.pan = (mx, self.lo, self.hi)
+            self.setCursor(E(Qt, 'CursorShape.ClosedHandCursor'))
+            return
         if not self.nodes:
             return
-        mx, my = _pos(ev)
         pr = self._plot()
         i = self._hit(mx, my)
-        if ev.button() == E(Qt, 'MouseButton.RightButton'):
-            if i >= 0 and len(self.nodes) > 2:
-                del self.nodes[i]
-                self.sel = -1
-                self.selectionChanged.emit(-1)
-                self.update()
-                self.curveChanged.emit()
-                self.curveEdited.emit()
+        if btn == E(Qt, 'MouseButton.RightButton'):
+            if i >= 0:
+                self.delete_node(i)
             return
-        if ev.button() != E(Qt, 'MouseButton.LeftButton'):
+        if btn != E(Qt, 'MouseButton.LeftButton'):
             return
         if i < 0 and pr.contains(QPointF(mx, my)):
             v, y = self._px2v(mx, pr), self._py2y(my, pr)
@@ -250,10 +317,18 @@ class CurveWidget(QWidget):
     def mouseMoveEvent(self, ev):
         mx, my = _pos(ev)
         pr = self._plot()
+        if self.pan:
+            x0, lo, hi = self.pan
+            dv = (mx - x0) / pr.width() * (hi - lo)
+            self.set_view(lo - dv, hi - dv)
+            self.viewChanged.emit(self.lo, self.hi)
+            return
         if self.drag >= 0:
             v = self._clamp_x(self.drag, self._px2v(mx, pr))
             self.nodes[self.drag] = [v, self._py2y(my, pr)]
-            self.hover = f"value {fmt(v)}   output {self.nodes[self.drag][1] * 100:.1f}%"
+            self.merge_with = self._merge_candidate(self.drag)
+            tip = '   release to merge' if self.merge_with >= 0 else ''
+            self.hover = f"value {fmt(v)}   output {self.nodes[self.drag][1] * 100:.1f}%{tip}"
             self.selectionChanged.emit(self.drag)
             self.update()
             self.curveChanged.emit()
@@ -264,21 +339,43 @@ class CurveWidget(QWidget):
             self.update()
 
     def mouseReleaseEvent(self, _ev):
+        if self.pan:
+            self.pan = None
+            self.unsetCursor()
+            return
         if self.drag >= 0:
-            self.drag = -1
+            i, j = self.drag, self._merge_candidate(self.drag)
+            self.drag = self.merge_with = -1
+            if j >= 0:                       # merge: keep the dragged node, drop its neighbour
+                del self.nodes[j]
+                self.sel = i - 1 if j < i else i
+                self.selectionChanged.emit(self.sel)
+                self.update()
+                self.curveChanged.emit()
             self.curveEdited.emit()
+
+    def wheelEvent(self, ev):
+        d = ev.angleDelta().y()
+        if not d:
+            return
+        pr = self._plot()
+        mx, _ = _pos(ev)
+        anchor = self._px2v(min(max(mx, pr.left()), pr.right()), pr)
+        f = 0.85 ** (d / 120.0)
+        self.set_view(anchor - (anchor - self.lo) * f, anchor + (self.hi - anchor) * f)
+        self.viewChanged.emit(self.lo, self.hi)
+        ev.accept()
 
     def leaveEvent(self, _ev):
         self.hover = ''
         self.update()
 
-    # ---------- keyboard: undo/redo/delete while the curve has focus ----------
+    # ---------- keyboard ----------
     def _key_action(self, ev):
         ctrl = bool(ev.modifiers() & E(Qt, 'KeyboardModifier.ControlModifier'))
-        shift = bool(ev.modifiers() & E(Qt, 'KeyboardModifier.ShiftModifier'))
         k = ev.key()
         if ctrl and k == E(Qt, 'Key.Key_Z'):
-            return 'redo' if shift else 'undo'
+            return 'redo' if self._shift(ev) else 'undo'
         if ctrl and k == E(Qt, 'Key.Key_Y'):
             return 'redo'
         if not ctrl and k in (E(Qt, 'Key.Key_Delete'), E(Qt, 'Key.Key_Backspace')) and self.sel >= 0:
@@ -298,12 +395,7 @@ class CurveWidget(QWidget):
             self.undoRequested.emit()
         elif act == 'redo':
             self.redoRequested.emit()
-        elif act == 'delete' and len(self.nodes) > 2:
-            del self.nodes[self.sel]
-            self.sel = -1
-            self.selectionChanged.emit(-1)
-            self.update()
-            self.curveChanged.emit()
-            self.curveEdited.emit()
+        elif act == 'delete':
+            self.delete_node(self.sel)
         else:
             super().keyPressEvent(ev)

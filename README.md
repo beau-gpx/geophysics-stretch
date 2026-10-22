@@ -11,18 +11,26 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
 - The panel shows the data histogram, the transfer curve (data value → position along the
   colour ramp) and a colour strip showing the result.
 - Click to add a node, drag to move it, right-click (or select + Delete) to remove it.
+  Drag a node onto its neighbour (it gets a red ring) and release to merge the two.
   Type exact values in *Selected node*.
 - **Undo / Redo** buttons, or Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) after clicking on the curve.
 - **Presets:** Linear, Hist. equalise, Log-linear.
-- **Points:** the number of nodes on the curve.
+- **Points:** the number of nodes on the curve (presets start with 32).
   - On an unedited preset it rebuilds the preset with that many points (each preset
     remembers its own count).
   - On a hand-edited curve it resamples: adding points keeps the shape exactly; removing
     points drops the least important nodes first so bends survive.
-- **Log histogram** helps with spiky data; **Full range** shows min–max instead of 0.1–99.9 %.
+- **Log histogram** helps with spiky data.
+
+## View range
+- The histogram opens showing the full data range (min to max).
+- Set the x-axis range exactly with the **View** fields, zoom with the mouse wheel, or pan with
+  Shift+drag or middle-drag. **Data** resets to min–max; **Curve** fits the view to the nodes.
+- Nodes outside the view are shown as orange arrows at the edge.
 
 ## Clip limits
-- **Percent:** clip a percentage of the data at each end (the resulting values are shown).
+- **Percentile:** separate lower and upper percentiles, e.g. 5 % to 80 %. The default
+  0 % to 100 % is the data minimum and maximum. The resulting values are shown below.
 - **Values:** type exact Min / Max data values (pre-filled from the current curve).
 - Changing the limits rebuilds an unedited preset, or stretches a hand-edited curve to the
   new range while keeping its shape.
@@ -41,7 +49,9 @@ Choose in the export dialog (your last settings are remembered):
 - **Mode:** lossy or lossless where the compression supports both
 - **Quality** (JPEG/WEBP 1–100), **target size %** (JPEG2000) or **compression level** (ZSTD/DEFLATE/PNG)
 - **Transparency:** alpha channel (smooth edges), 1-bit internal mask, or none with a fill colour
-- **Resolution:** 1–100 % of the grid, with the output size shown
+- **Resolution:** a scale (1–1000 % of native) or an exact **cell size** in map units, finer or
+  coarser than the grid, with nearest, bilinear, cubic or average resampling. The output size
+  and cell size are shown.
 - **Overviews** for fast display, and **add to map** when done
 
 Options this QGIS's GDAL can't write are greyed out, and a note under the options explains the

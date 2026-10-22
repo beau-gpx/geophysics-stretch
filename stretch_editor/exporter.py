@@ -37,9 +37,28 @@ TRANSP = {'alpha': 'Alpha channel (smooth edges)',
           'mask': '1-bit internal mask',
           'none': 'None — fill with background colour'}
 
+RESAMPLING = {'nearest': 'Nearest neighbour', 'bilinear': 'Bilinear', 'cubic': 'Cubic',
+              'average': 'Average (for coarser cells)'}
+
 DEFAULTS = dict(format='COG', compression='WEBP', lossless=False, quality=90, level=6,
-                jp2_size=10, transparency='alpha', bg=[255, 255, 255], scale=100,
+                jp2_size=10, transparency='alpha', bg=[255, 255, 255],
+                res_mode='scale', scale=100, cell=0.0, resampling='bilinear',
                 overviews=True, add_to_map=True)
+
+MAX_SCALE = 1000
+
+
+def compute_grid(s, w, h, ext_w, ext_h):
+    """Output size and pixel size for the settings.
+    Cell-size mode keeps the exact cell and extends the extent to whole cells."""
+    if s.get('res_mode') == 'cell' and s.get('cell', 0) > 0:
+        c = float(s['cell'])
+        ow = max(1, int(np.ceil(ext_w / c - 1e-6)))
+        oh = max(1, int(np.ceil(ext_h / c - 1e-6)))
+        return ow, oh, c, c
+    f = s.get('scale', 100) / 100.0
+    ow, oh = max(1, round(w * f)), max(1, round(h * f))
+    return ow, oh, ext_w / ow, ext_h / oh
 
 
 def allowed_transparency(fmt, comp):
@@ -69,7 +88,12 @@ def normalise(s):
         s['level'] = min(hi, max(lo, int(s['level'])))
     s['quality'] = min(100, max(1, int(s['quality'])))
     s['jp2_size'] = min(100, max(1, int(s['jp2_size'])))
-    s['scale'] = min(100, max(1, int(s['scale'])))
+    s['scale'] = min(MAX_SCALE, max(1, int(s['scale'])))
+    if s['res_mode'] not in ('scale', 'cell'):
+        s['res_mode'] = 'scale'
+    if s['resampling'] not in RESAMPLING:
+        s['resampling'] = 'bilinear'
+    s['cell'] = max(0.0, float(s.get('cell') or 0.0))
     return s
 
 

@@ -29,7 +29,7 @@ SAMPLE_MAX = 1200          # max sample dimension for histogram
 LUT_N = 1024               # colour lookup resolution
 SHADER_N = 512             # colour-ramp shader items applied to the layer
 HISTORY_MAX = 200
-DEFAULT_POINTS = {'linear': 2, 'histeq': 33, 'log': 25}
+DEFAULT_POINTS = {'linear': 32, 'histeq': 32, 'log': 32}
 PRESET_NAMES = {'linear': 'Linear', 'histeq': 'Hist. equalise', 'log': 'Log-linear'}
 
 
@@ -133,6 +133,42 @@ def _dspin(decimals=6):
     return sb
 
 
+
+def _map_units(layer):
+    try:
+        from qgis.core import QgsUnitTypes
+        return QgsUnitTypes.toAbbreviatedString(layer.crs().mapUnits())
+    except Exception:
+        return ''
+
+
+def _provider_resampling(prov, method):
+    """Temporarily switch the provider's resampling. Returns (restore_fn, ok)."""
+    name = {'nearest': 'Nearest', 'bilinear': 'Bilinear', 'cubic': 'Cubic', 'average': 'Average'}[method]
+    try:
+        from qgis.core import QgsRasterDataProvider
+        m = _enum((QgsRasterDataProvider, 'ResamplingMethod.' + name), (Qgis, 'RasterResamplingMethod.' + name))
+        old = (prov.isProviderResamplingEnabled(), prov.zoomedInResamplingMethod(), prov.zoomedOutResamplingMethod())
+    except Exception:
+        return (lambda: None), method == 'nearest'
+
+    def restore():
+        try:
+            prov.setZoomedInResamplingMethod(old[1])
+            prov.setZoomedOutResamplingMethod(old[2])
+            prov.enableProviderResampling(old[0])
+        except Exception:
+            pass
+
+    try:
+        ok = prov.enableProviderResampling(method != 'nearest')
+        prov.setZoomedInResamplingMethod(m)
+        prov.setZoomedOutResamplingMethod(m)
+    except Exception:
+        ok = False
+    return restore, bool(ok) or method == 'nearest'
+
+
 # ---------------------------------------------------------------- dock
 class StretchDock(QDockWidget):
     def __init__(self, iface, parent=None):
@@ -170,8 +206,9 @@ class StretchDock(QDockWidget):
         self.curve = CurveWidget()
         lay.addWidget(self.curve, 1)
         row = QHBoxLayout()
-        hint = QLabel('Click to add · drag to move · right-click or Delete to remove')
+        hint = QLabel('Click add · drag move (onto a node to merge) · right-click delete · wheel zoom · Shift-drag pan')
         hint.setStyleSheet('color: gray; font-size: 8pt;')
+        hint.setWordWrap(True)
         row.addWidget(hint, 1)
         self.btnUndo = QToolButton()
         self.btnUndo.setText('↶ Undo')
@@ -181,6 +218,26 @@ class StretchDock(QDockWidget):
         self.btnRedo.setToolTip('Redo curve change (Ctrl+Y / Ctrl+Shift+Z)')
         row.addWidget(self.btnUndo)
         row.addWidget(self.btnRedo)
+        lay.addLayout(row)
+
+        # view range
+        row = QHBoxLayout()
+        row.addWidget(QLabel('View'))
+        self.viewLo = _dspin()
+        self.viewHi = _dspin()
+        self.viewLo.setToolTip('Left edge of the histogram (data value)')
+        self.viewHi.setToolTip('Right edge of the histogram (data value)')
+        row.addWidget(self.viewLo, 1)
+        row.addWidget(QLabel('to'))
+        row.addWidget(self.viewHi, 1)
+        self.btnViewData = QToolButton()
+        self.btnViewData.setText('Data')
+        self.btnViewData.setToolTip('Show the full data range (min to max)')
+        self.btnViewCurve = QToolButton()
+        self.btnViewCurve.setText('Curve')
+        self.btnViewCurve.setToolTip('Fit the view to the curve nodes')
+        row.addWidget(self.btnViewData)
+        row.addWidget(self.btnViewCurve)
         lay.addLayout(row)
 
         # presets + points
@@ -201,36 +258,41 @@ class StretchDock(QDockWidget):
                                'Unedited preset: rebuilds the preset with this many points.\n'
                                'Edited curve: resamples it, keeping its shape.')
         row.addWidget(self.points)
-        self.chkLogHist = QCheckBox('Log histogram')
-        self.chkFull = QCheckBox('Full range')
-        self.chkFull.setToolTip('Show the full data range instead of 0.1–99.9 %')
         row.addStretch()
+        self.chkLogHist = QCheckBox('Log histogram')
         row.addWidget(self.chkLogHist)
-        row.addWidget(self.chkFull)
         lay.addLayout(row)
 
         # clip limits
         box = QGroupBox('Clip limits')
         cg = QGridLayout(box)
         self.clipMode = QComboBox()
-        self.clipMode.addItem('Percent', 'pct')
+        self.clipMode.addItem('Percentile', 'pct')
         self.clipMode.addItem('Values', 'val')
-        cg.addWidget(self.clipMode, 0, 0)
-        self.clip = QDoubleSpinBox()
-        self.clip.setRange(0.0, 20.0)
-        self.clip.setDecimals(2)
-        self.clip.setSingleStep(0.25)
-        self.clip.setValue(1.0)
-        self.clip.setSuffix(' % each end')
-        self.clip.setKeyboardTracking(False)
-        cg.addWidget(self.clip, 0, 1, 1, 3)
+        cg.addWidget(self.clipMode, 0, 0, 1, 4)
+        self.pctLo = QDoubleSpinBox()
+        self.pctHi = QDoubleSpinBox()
+        for sb, v in ((self.pctLo, 0.0), (self.pctHi, 100.0)):
+            sb.setRange(0.0, 100.0)
+            sb.setDecimals(2)
+            sb.setSingleStep(0.5)
+            sb.setSuffix(' %')
+            sb.setKeyboardTracking(False)
+            sb.setValue(v)
+        self.pctLo.setToolTip('Lower limit as a percentile of the data (0 % = minimum)')
+        self.pctHi.setToolTip('Upper limit as a percentile of the data (100 % = maximum)')
+        self.lblPLo, self.lblPHi = QLabel('Lower'), QLabel('Upper')
+        cg.addWidget(self.lblPLo, 1, 0)
+        cg.addWidget(self.pctLo, 1, 1)
+        cg.addWidget(self.lblPHi, 1, 2)
+        cg.addWidget(self.pctHi, 1, 3)
         self.clipLo = _dspin()
         self.clipHi = _dspin()
         self.lblLo, self.lblHi = QLabel('Min'), QLabel('Max')
-        cg.addWidget(self.lblLo, 1, 0)
-        cg.addWidget(self.clipLo, 1, 1)
-        cg.addWidget(self.lblHi, 1, 2)
-        cg.addWidget(self.clipHi, 1, 3)
+        cg.addWidget(self.lblLo, 2, 0)
+        cg.addWidget(self.clipLo, 2, 1)
+        cg.addWidget(self.lblHi, 2, 2)
+        cg.addWidget(self.clipHi, 2, 3)
         lay.addWidget(box)
 
         # selected node
@@ -280,6 +342,7 @@ class StretchDock(QDockWidget):
         # signals (Ctrl+Z / Ctrl+Y / Delete are handled by the curve while it has focus)
         self.curve.undoRequested.connect(self.undo)
         self.curve.redoRequested.connect(self.redo)
+        self.curve.viewChanged.connect(self.on_curve_view)
         self.layerCombo.layerChanged.connect(self.on_layer)
         self.bandCombo.bandChanged.connect(self.on_band)
         self.btnLin.clicked.connect(lambda: self.preset('linear'))
@@ -287,9 +350,13 @@ class StretchDock(QDockWidget):
         self.btnLog.clicked.connect(lambda: self.preset('log'))
         self.points.valueChanged.connect(self.on_points)
         self.chkLogHist.toggled.connect(self.curve.set_log_hist)
-        self.chkFull.toggled.connect(lambda _: self.update_histogram())
+        self.viewLo.valueChanged.connect(self.on_view_spin)
+        self.viewHi.valueChanged.connect(self.on_view_spin)
+        self.btnViewData.clicked.connect(self.view_data)
+        self.btnViewCurve.clicked.connect(self.view_curve)
         self.clipMode.currentIndexChanged.connect(self.on_clip_mode)
-        self.clip.valueChanged.connect(self.on_clip)
+        self.pctLo.valueChanged.connect(self.on_clip)
+        self.pctHi.valueChanged.connect(self.on_clip)
         self.clipLo.valueChanged.connect(self.on_clip)
         self.clipHi.valueChanged.connect(self.on_clip)
         self.curve.curveChanged.connect(self.on_curve_changed)
@@ -318,7 +385,7 @@ class StretchDock(QDockWidget):
     def on_band(self, band):
         self.sample = None
         if self.layer is None or band is None or band < 1:
-            self.curve.set_histogram(None, 0, 1)
+            self.curve.set_sample(None)
             self.curve.set_nodes([])
             self.reset_history()
             return
@@ -337,9 +404,11 @@ class StretchDock(QDockWidget):
             return
 
         self._loading = True
-        step = (float(np.max(s)) - float(np.min(s))) / 200.0 or 1.0
-        for sb in (self.clipLo, self.clipHi, self.spinVal):
+        dlo, dhi = stretch.data_range(s)
+        step = (dhi - dlo) / 200.0 or 1.0
+        for sb in (self.clipLo, self.clipHi, self.spinVal, self.viewLo, self.viewHi):
             sb.setSingleStep(step)
+        self.curve.set_sample(s)
 
         state = self.load_state()
         if state and state.get('band') == band and len(state.get('nodes', [])) >= 2:
@@ -350,20 +419,28 @@ class StretchDock(QDockWidget):
             self.edited = bool(state.get('edited', True))
             self.preset_points.update(state.get('preset_points', {}))
             clip = state.get('clip', {})
-            self._set_quiet(self.clip, clip.get('pct', self.clip.value()))
-            self._set_quiet(self.clipMode, clip.get('mode', 'pct'))
-            self.on_clip_mode(fill=False)
+            if 'lower' in clip:
+                plo, phi = clip['lower'], clip['upper']
+            else:                                   # v1.1 stored one symmetric percent
+                p = clip.get('pct', 0.0)
+                plo, phi = p, 100.0 - p
+            self._set_quiet(self.pctLo, plo)
+            self._set_quiet(self.pctHi, phi)
+            self._set_quiet(self.clipMode, 'val' if clip.get('mode') == 'val' else 'pct')
             nodes = state['nodes']
             self._set_quiet(self.clipLo, clip.get('lo', nodes[0][0]))
             self._set_quiet(self.clipHi, clip.get('hi', nodes[-1][0]))
             self.curve.set_nodes(nodes)
+            view = state.get('view') or (dlo, dhi)
         else:
             self.last_preset, self.edited = 'linear', False
-            lo, hi = stretch.percent_clip(s, self.clip.value())
-            self._set_quiet(self.clipLo, lo)
+            lo, hi = stretch.percent_clip(s, self.pctLo.value(), self.pctHi.value())
+            self._set_quiet(self.clipLo, lo)        # new grid: start the value limits from its data
             self._set_quiet(self.clipHi, hi)
             self.curve.set_nodes(self._run_preset('linear'))
-        self.update_histogram()
+            view = (dlo, dhi)
+        self.on_clip_mode(fill=False)
+        self.set_view(*view)
         self.sync_points()
         self._loading = False
         self.reset_history()
@@ -381,15 +458,29 @@ class StretchDock(QDockWidget):
             widget.setValue(value)
         widget.blockSignals(False)
 
-    def update_histogram(self):
-        if self.sample is None:
-            return
-        inc = (self.clipLo.value(), self.clipHi.value()) if self.clipMode.currentData() == 'val' else ()
-        dmin, dmax = float(np.min(self.sample)), float(np.max(self.sample))
-        inc = tuple(min(dmax, max(dmin, v)) for v in inc)
-        lo, hi = stretch.view_range(self.sample, self.chkFull.isChecked(), inc)
-        counts, _ = stretch.histogram(self.sample, lo, hi)
-        self.curve.set_histogram(counts, lo, hi)
+    # ------------------------------------------------ view range
+    def set_view(self, lo, hi):
+        self.curve.set_view(lo, hi)
+        self._set_quiet(self.viewLo, self.curve.lo)
+        self._set_quiet(self.viewHi, self.curve.hi)
+        self.save_state()
+
+    def on_curve_view(self, lo, hi):      # wheel / pan in the editor
+        self._set_quiet(self.viewLo, lo)
+        self._set_quiet(self.viewHi, hi)
+        self.save_state()
+
+    def on_view_spin(self, *_):
+        if self.viewHi.value() > self.viewLo.value():
+            self.set_view(self.viewLo.value(), self.viewHi.value())
+
+    def view_data(self):
+        if self.sample is not None:
+            self.set_view(*stretch.data_range(self.sample))
+
+    def view_curve(self):
+        if len(self.curve.nodes) >= 2:
+            self.set_view(*stretch.fit_curve_view(self.curve.nodes))
 
     # ------------------------------------------------ clip limits
     def clip_range(self):
@@ -400,11 +491,12 @@ class StretchDock(QDockWidget):
             if hi == lo:
                 hi = lo + max(abs(lo) * 1e-6, 1e-9)
             return lo, hi
-        return stretch.percent_clip(self.sample, self.clip.value())
+        return stretch.percent_clip(self.sample, self.pctLo.value(), self.pctHi.value())
 
     def on_clip_mode(self, *_, fill=True):
         manual = self.clipMode.currentData() == 'val'
-        self.clip.setVisible(not manual)
+        for wdg in (self.pctLo, self.pctHi, self.lblPLo, self.lblPHi):
+            wdg.setEnabled(not manual)
         for wdg in (self.clipLo, self.clipHi, self.lblLo, self.lblHi):
             wdg.setEnabled(manual)
         if manual and fill and len(self.curve.nodes) >= 2 and not self._loading:
@@ -412,13 +504,14 @@ class StretchDock(QDockWidget):
             self._set_quiet(self.clipLo, self.curve.nodes[0][0])
             self._set_quiet(self.clipHi, self.curve.nodes[-1][0])
         if not self._loading:
-            self.update_histogram()
             self.on_clip()          # apply the limits of the newly chosen mode
             self.save_state()
 
     def on_clip(self, *_):
         if self.sample is None or self._loading or len(self.curve.nodes) < 2:
             return
+        if self.clipMode.currentData() == 'pct' and self.pctHi.value() <= self.pctLo.value():
+            return                  # wait until upper > lower
         lo, hi = self.clip_range()
         if self.clipMode.currentData() == 'pct':
             self._set_quiet(self.clipLo, lo)
@@ -428,7 +521,6 @@ class StretchDock(QDockWidget):
         else:
             nodes = self._run_preset(self.last_preset)
         self.curve.set_nodes(nodes)
-        self.update_histogram()
         self.commit()
 
     # ------------------------------------------------ presets / points
@@ -594,8 +686,10 @@ class StretchDock(QDockWidget):
         state = {'band': self.bandCombo.currentBand(), 'nodes': self.curve.nodes,
                  'preset': self.last_preset, 'edited': self.edited,
                  'preset_points': self.preset_points,
-                 'clip': {'mode': self.clipMode.currentData(), 'pct': self.clip.value(),
+                 'clip': {'mode': self.clipMode.currentData(),
+                          'lower': self.pctLo.value(), 'upper': self.pctHi.value(),
                           'lo': self.clipLo.value(), 'hi': self.clipHi.value()},
+                 'view': [self.curve.lo, self.curve.hi],
                  'ramp': ramp_to_props(ramp) if ramp else {}}
         try:
             self.layer.setCustomProperty(PROP, json.dumps(state))
@@ -630,7 +724,8 @@ class StretchDock(QDockWidget):
         if self.layer is None or len(self.curve.nodes) < 2:
             return
         lyr, prov, band = self.layer, self.layer.dataProvider(), self.bandCombo.currentBand()
-        dlg = ExportDialog(lyr.width(), lyr.height(), self)
+        ext = lyr.extent()
+        dlg = ExportDialog(lyr.width(), lyr.height(), ext.width(), ext.height(), _map_units(lyr), self)
         if not dlg.exec():
             return
         s = dlg.settings()
@@ -642,15 +737,12 @@ class StretchDock(QDockWidget):
         if not out.lower().endswith(fmt['ext']):
             out += fmt['ext']
 
-        f = s['scale'] / 100.0
-        ow, oh = max(1, round(lyr.width() * f)), max(1, round(lyr.height() * f))
-        ext = lyr.extent()
-        px, py = ext.width() / ow, ext.height() / oh
-        gt = (ext.xMinimum(), px, 0, ext.yMaximum(), 0, -py)
+        ow, oh, px, py = exporter.compute_grid(s, lyr.width(), lyr.height(), ext.width(), ext.height())
+        x0, y1 = ext.xMinimum(), ext.yMaximum()
+        gt = (x0, px, 0, y1, 0, -py)
 
         def read_strip(r0, n):
-            sub = QgsRectangle(ext.xMinimum(), ext.yMaximum() - (r0 + n) * py,
-                               ext.xMaximum(), ext.yMaximum() - r0 * py)
+            sub = QgsRectangle(x0, y1 - (r0 + n) * py, x0 + ow * px, y1 - r0 * py)
             return read_block(prov, band, sub, ow, n)
 
         prog = QProgressDialog('Rendering…', 'Cancel', 0, 1000, self)
@@ -663,6 +755,8 @@ class StretchDock(QDockWidget):
             QApplication.processEvents()
             return not prog.wasCanceled()
 
+        native = (ow, oh) == (lyr.width(), lyr.height())
+        restore, resamp_ok = _provider_resampling(prov, 'nearest' if native else s['resampling'])
         try:
             ok = exporter.run_export(read_strip, ow, oh, gt, lyr.crs().toWkt(),
                                      [list(n) for n in self.curve.nodes], self.lut_rgba, s, out, progress)
@@ -671,10 +765,15 @@ class StretchDock(QDockWidget):
             QMessageBox.warning(self, 'Stretch Editor',
                                 f'Export failed:\n{e}\n\nTry a different format or compression.')
             return
+        finally:
+            restore()
         prog.close()
         if not ok:
             return
         size = os.path.getsize(out) / 1e6
-        self.iface.messageBar().pushSuccess('Stretch Editor', f'Exported {os.path.basename(out)} ({size:,.1f} MB)')
+        msg = f'Exported {os.path.basename(out)} ({size:,.1f} MB, {ow:,} × {oh:,} px)'
+        if not native and not resamp_ok:
+            msg += f" — this layer's provider can't resample, so nearest neighbour was used"
+        self.iface.messageBar().pushSuccess('Stretch Editor', msg)
         if s['add_to_map']:
             self.iface.addRasterLayer(out, os.path.splitext(os.path.basename(out))[0])

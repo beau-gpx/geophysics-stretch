@@ -3,7 +3,7 @@ import json
 
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
-    QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QComboBox, QSpinBox, QCheckBox,
+    QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
     QLabel, QDialogButtonBox, QWidget,
 )
 from qgis.core import QgsSettings
@@ -35,10 +35,13 @@ NOTES = {
 
 
 class ExportDialog(QDialog):
-    def __init__(self, width, height, parent=None):
+    def __init__(self, width, height, ext_w, ext_h, units='', parent=None):
         super().__init__(parent)
         self.setWindowTitle('Export stretched image')
         self.w, self.h = width, height
+        self.ext_w, self.ext_h = ext_w, ext_h
+        self.native_x, self.native_y = ext_w / width, ext_h / height
+        self.units = units
         self.caps_comps, self.caps_fmts = ex.gdal_capabilities()
 
         lay = QVBoxLayout(self)
@@ -79,13 +82,35 @@ class ExportDialog(QDialog):
         rw = QWidget()
         rl = QHBoxLayout(rw)
         rl.setContentsMargins(0, 0, 0, 0)
+        self.resMode = QComboBox()
+        self.resMode.addItem('Scale', 'scale')
+        self.resMode.addItem('Cell size', 'cell')
         self.scale = QSpinBox()
-        self.scale.setRange(1, 100)
+        self.scale.setRange(1, ex.MAX_SCALE)
         self.scale.setSuffix(' %')
-        self.dims = QLabel()
-        rl.addWidget(self.scale)
-        rl.addWidget(self.dims, 1)
+        self.scale.setToolTip('100 % = native resolution; above 100 % = finer pixels (resampled)')
+        self.cell = QDoubleSpinBox()
+        self.cell.setDecimals(6)
+        self.cell.setRange(1e-6, 1e9)
+        self.cell.setSuffix(f' {units}' if units else '')
+        self.cell.setToolTip('Output pixel size in map units. Smaller than native = finer (resampled).')
+        rl.addWidget(self.resMode)
+        rl.addWidget(self.scale, 1)
+        rl.addWidget(self.cell, 1)
         form.addRow('Resolution', rw)
+        native = f'{self.native_x:.6g}' + (f' × {self.native_y:.6g}' if abs(self.native_x - self.native_y) > 1e-9 * self.native_x else '')
+        self.nativeLbl = QLabel(f'Native cell {native} {units}'.strip())
+        self.nativeLbl.setStyleSheet('color: gray;')
+        form.addRow('', self.nativeLbl)
+
+        self.resamp = QComboBox()
+        for k, label in ex.RESAMPLING.items():
+            self.resamp.addItem(label, k)
+        self.resampLabel = QLabel('Resampling')
+        form.addRow(self.resampLabel, self.resamp)
+
+        self.dims = QLabel()
+        form.addRow('Output', self.dims)
 
         self.ovr = QCheckBox('Build overviews (pyramids) for fast display')
         form.addRow('', self.ovr)
@@ -105,9 +130,10 @@ class ExportDialog(QDialog):
 
         self._busy = False
         self.load(self._stored())
-        for w in (self.fmt, self.comp, self.mode, self.transp):
+        for w in (self.fmt, self.comp, self.mode, self.transp, self.resMode, self.resamp):
             w.currentIndexChanged.connect(self.refresh)
         self.scale.valueChanged.connect(self.refresh)
+        self.cell.valueChanged.connect(self.refresh)
         self.setMinimumWidth(460)
 
     # ------------------------------------------------ helpers
@@ -142,7 +168,11 @@ class ExportDialog(QDialog):
         self.level.setValue(s['level'])
         self._fill_transp(s['format'], s['compression'], s['transparency'])
         self.bg.setColor(QColor(*s['bg']))
+        self._select(self.resMode, s['res_mode'])
         self.scale.setValue(s['scale'])
+        self.cell.setSingleStep(self.native_x / 10)
+        self.cell.setValue(self.native_x)      # cell size always starts at this grid's native cell
+        self._select(self.resamp, s['resampling'])
         self.ovr.setChecked(s['overviews'])
         self.addMap.setChecked(s['add_to_map'])
         self._busy = False
@@ -158,7 +188,8 @@ class ExportDialog(QDialog):
             format=fmt, compression=comp, lossless=bool(self.mode.currentData()),
             quality=qq, jp2_size=jp2, level=self.level.value(),
             transparency=self.transp.currentData(), bg=[c.red(), c.green(), c.blue()],
-            scale=self.scale.value(), overviews=self.ovr.isChecked(),
+            res_mode=self.resMode.currentData(), scale=self.scale.value(), cell=self.cell.value(),
+            resampling=self.resamp.currentData(), overviews=self.ovr.isChecked(),
             add_to_map=self.addMap.isChecked()))
 
     def accept(self):
@@ -237,10 +268,19 @@ class ExportDialog(QDialog):
         self.ovr.setEnabled(has_ovr)
 
         # dimensions / notes
-        f = self.scale.value() / 100.0
-        ow, oh = max(1, round(self.w * f)), max(1, round(self.h * f))
+        cellmode = self.resMode.currentData() == 'cell'
+        self.scale.setVisible(not cellmode)
+        self.cell.setVisible(cellmode)
+        s = dict(res_mode=self.resMode.currentData(), scale=self.scale.value(), cell=self.cell.value())
+        ow, oh, px, py = ex.compute_grid(s, self.w, self.h, self.ext_w, self.ext_h)
+        native = (ow, oh) == (self.w, self.h) and abs(px - self.native_x) <= 1e-9 * self.native_x
+        self.resamp.setEnabled(not native)
+        self.resampLabel.setEnabled(not native)
         nb = 3 if none else 4
-        self.dims.setText(f'→ {ow:,} × {oh:,} px  (raw {ow * oh * nb / 1e6:,.1f} MB)')
+        raw = ow * oh * nb / 1e6
+        cell_txt = f'{px:.6g}' if abs(px - py) <= 1e-9 * px else f'{px:.6g} × {py:.6g}'
+        warn = '  ⚠ very large' if ow * oh > 4e8 else ''
+        self.dims.setText(f'{ow:,} × {oh:,} px, cell {cell_txt} {self.units}  (raw {raw:,.1f} MB){warn}')
         note = NOTES.get((fmt if fmt != 'GTiff' else 'COG', comp, lossless), '')
         if fmt == 'GTiff':
             note += ' Plain tiled GeoTIFF: use this if a reader rejects COGs.'

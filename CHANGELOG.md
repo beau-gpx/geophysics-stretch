@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.2 — 2026-10-22
+- Export resolution by exact cell size (finer or coarser) or scale up to 1000 %, with
+  nearest / bilinear / cubic / average resampling.
+- Presets default to 32 points.
+- Clip limits default to 0 % / 100 % (data min and max).
+- Separate lower and upper percentile clips (e.g. 5 % to 80 %).
+- Histogram opens at the full data range.
+- Manual x-axis view range: View fields, mouse-wheel zoom, Shift/middle-drag pan, Data and
+  Curve buttons; off-screen nodes shown as edge markers.
+- Dragging a node onto its neighbour merges the two.
+
 ## v1.1 — 2026-10-22
 - Clip limits by manual Min/Max values as well as percent.
 - **Points** field to set the number of curve nodes (rebuilds unedited presets; shape-preserving

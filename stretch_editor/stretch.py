@@ -16,11 +16,17 @@ def _safe_range(lo, hi):
     return lo, hi
 
 
-def percent_clip(sample, clip_pct):
-    lo, hi = np.percentile(sample, [clip_pct, 100.0 - clip_pct])
+def percent_clip(sample, lower_pct=0.0, upper_pct=100.0):
+    """Data values at the lower and upper percentiles (0 and 100 = min and max)."""
+    lower_pct, upper_pct = sorted((float(lower_pct), float(upper_pct)))
+    lo, hi = np.percentile(sample, [lower_pct, upper_pct])
     if not hi > lo:
         lo, hi = np.min(sample), np.max(sample)
     return _safe_range(lo, hi)
+
+
+def data_range(sample):
+    return _safe_range(np.min(sample), np.max(sample))
 
 
 def sanitize(nodes):
@@ -117,14 +123,11 @@ def histogram(sample, lo, hi, bins=256):
     return np.histogram(sample, bins=bins, range=(lo, hi))
 
 
-def view_range(sample, full=False, include=()):
-    if full:
-        lo, hi = float(np.min(sample)), float(np.max(sample))
-    else:
-        lo, hi = np.percentile(sample, [0.1, 99.9])
-    for v in include:
-        lo, hi = min(lo, v), max(hi, v)
-    return _safe_range(lo, hi)
+def fit_curve_view(nodes, pad=0.05):
+    """View range that shows all nodes with a small margin."""
+    lo, hi = _safe_range(nodes[0][0], nodes[-1][0])
+    m = (hi - lo) * pad
+    return lo - m, hi + m
 
 
 # ------------------------------------------------------------- rendering
