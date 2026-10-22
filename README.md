@@ -47,6 +47,8 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
 ## Colour and saving
 - **Colour ramp:** any QGIS ramp (default is an ER Mapper-like pseudocolour); invert it from
   the button's menu.
+- Opening a grid never changes its style; the first edit (or **Apply**) does. A grid styled
+  elsewhere starts with its existing min/max as the clip values.
 - **Live update** restyles the layer as you edit. The curve, clip settings and ramp are saved
   with the layer, so they come back when you reopen the project.
 - **Save style (.qml)** saves the stretch as a QGIS style for reuse.

@@ -136,6 +136,30 @@ def _dspin(decimals=6):
 
 
 
+def existing_stretch_range(layer, band):
+    """(min, max) of the layer's current single-band stretch, or None."""
+    try:
+        r = layer.renderer()
+        if r is None:
+            return None
+        if hasattr(r, 'contrastEnhancement') and r.contrastEnhancement() is not None:
+            if hasattr(r, 'grayBand') and r.grayBand() != band:
+                return None
+            ce = r.contrastEnhancement()
+            lo, hi = ce.minimumValue(), ce.maximumValue()
+        elif hasattr(r, 'classificationMin'):
+            if hasattr(r, 'band') and r.band() != band:
+                return None
+            lo, hi = r.classificationMin(), r.classificationMax()
+        else:
+            return None
+        if lo is None or hi is None or not np.isfinite([lo, hi]).all() or not hi > lo:
+            return None
+        return float(lo), float(hi)
+    except Exception:
+        return None
+
+
 def _map_units(layer):
     try:
         from qgis.core import QgsUnitTypes
@@ -506,7 +530,13 @@ class StretchDock(QDockWidget):
             view = state.get('view') or (dlo, dhi)
         else:
             self.last_preset, self.edited = 'linear', False
-            lo, hi = stretch.percent_clip(s, self.pctLo.value(), self.pctHi.value())
+            current = existing_stretch_range(self.layer, band)
+            if current:
+                # start from the stretch the layer already has (shown, not applied)
+                lo, hi = current
+                self._set_quiet(self.clipMode, 'val')
+            else:
+                lo, hi = stretch.percent_clip(s, self.pctLo.value(), self.pctHi.value())
             self._set_quiet(self.clipLo, lo)        # new grid: start the value limits from its data
             self._set_quiet(self.clipHi, hi)
             self.curve.set_nodes(self._run_preset('linear'))
@@ -517,7 +547,8 @@ class StretchDock(QDockWidget):
         self._loading = False
         self.reset_history()
         self.update_lut()
-        self.apply()
+        # Opening a grid never restyles it: the layer keeps its current stretch until you
+        # edit the curve, pick a preset, change the clip or ramp, or press Apply.
 
     @staticmethod
     def _set_quiet_check(box, on):
@@ -663,6 +694,8 @@ class StretchDock(QDockWidget):
 
     def on_ramp(self):
         self.update_lut()
+        if self._loading:          # ramp restored while opening a grid: don't restyle it
+            return
         self.save_state()
         self.apply()
 

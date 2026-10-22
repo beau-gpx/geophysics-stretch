@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.4.1 — 2026-10-22
+- Fix: opening the plugin (or switching grids, including via Layers panel sync) no longer
+  restyles the layer. Its current stretch is kept until you edit the curve, pick a preset,
+  change the clip or ramp, or press Apply.
+- A grid without a saved Stretch Editor curve now starts from its existing stretch range
+  (clip limits set to those values).
+
 ## v1.4 — 2026-10-22
 - **Sync with Layers panel** (on by default): the grid being edited becomes the active layer
   (group expanded, scrolled into view), and selecting a raster in the Layers panel opens it.
