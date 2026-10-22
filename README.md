@@ -1,4 +1,4 @@
-# Stretch Editor (QGIS plugin) — v1.1
+# Stretch Editor (QGIS plugin)
 
 ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics, DEMs).
 
