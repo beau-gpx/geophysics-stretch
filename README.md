@@ -43,6 +43,7 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
 - **Percentile:** separate lower and upper percentiles, e.g. 5 % to 80 %. The default
   0 % to 100 % is the data minimum and maximum. The resulting values are shown below.
 - **Values:** type exact Min / Max data values (pre-filled from the current curve).
+- **Reset** returns to Percentile 0 % – 100 % (data minimum to maximum).
 - Changing the limits rebuilds an unedited preset, or stretches a hand-edited curve to the
   new range while keeping its shape.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5.2 — 2026-10-22
+- **Reset** button for clip limits: back to Percentile 0 % – 100 % (data min to max; in mirror
+  mode, centre ± the largest distance from the centre).
+
 ## v1.5.1 — 2026-10-22
 - In **Curve** view, the x-axis re-fits automatically when the clip limits (or mirror centre)
   change. **Data** view and free (zoomed/panned/typed) views are left alone.

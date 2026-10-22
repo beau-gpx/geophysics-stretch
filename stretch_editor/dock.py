@@ -310,7 +310,11 @@ class StretchDock(QDockWidget):
         self.clipMode = QComboBox()
         self.clipMode.addItem('Percentile', 'pct')
         self.clipMode.addItem('Values', 'val')
-        cg.addWidget(self.clipMode, 0, 0, 1, 4)
+        cg.addWidget(self.clipMode, 0, 0, 1, 3)
+        self.btnClipReset = QToolButton()
+        self.btnClipReset.setText('Reset')
+        self.btnClipReset.setToolTip('Reset to Percentile 0 % – 100 % (data minimum to maximum)')
+        cg.addWidget(self.btnClipReset, 0, 3)
         self.pctLo = QDoubleSpinBox()
         self.pctHi = QDoubleSpinBox()
         for sb, v in ((self.pctLo, 0.0), (self.pctHi, 100.0)):
@@ -426,6 +430,7 @@ class StretchDock(QDockWidget):
         self.btnViewData.clicked.connect(self.view_data)
         self.btnViewCurve.clicked.connect(self.view_curve)
         self.clipMode.currentIndexChanged.connect(self.on_clip_mode)
+        self.btnClipReset.clicked.connect(self.reset_clip)
         self.pctLo.valueChanged.connect(self.on_clip)
         self.pctHi.valueChanged.connect(self.on_clip)
         self.clipLo.valueChanged.connect(self.on_clip)
@@ -689,6 +694,13 @@ class StretchDock(QDockWidget):
         if not self._loading:
             self.on_clip()          # apply the limits of the newly chosen mode
             self.save_state()
+
+    def reset_clip(self):
+        """Back to the default limits: Percentile 0–100 % (data min to max)."""
+        self._set_quiet(self.pctLo, 0.0)
+        self._set_quiet(self.pctHi, 100.0)
+        self._set_quiet(self.clipMode, 'pct')
+        self.on_clip_mode(fill=False)       # updates the fields, re-runs the curve, follows Curve view
 
     def on_clip(self, *_):
         if self.sample is None or self._loading or len(self.curve.nodes) < 2:
