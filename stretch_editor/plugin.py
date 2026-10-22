@@ -28,6 +28,7 @@ class StretchEditorPlugin:
         self.iface.removeToolBarIcon(self.action)
         self.iface.removePluginRasterMenu('Stretch Editor', self.action)
         if self.dock:
+            self.dock.cleanup()
             self.iface.removeDockWidget(self.dock)
             self.dock.deleteLater()
             self.dock = None

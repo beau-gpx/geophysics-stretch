@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4 — 2026-10-22
+- **Sync with Layers panel** (on by default): the grid being edited becomes the active layer
+  (group expanded, scrolled into view), and selecting a raster in the Layers panel opens it.
+- The editor opens on the raster already selected in the Layers panel.
+- **Colour bar…** export (PNG, SVG, PDF) with live preview: title, units, orientation, size,
+  label count and spacing, decimals, text size, background.
+- Image export can also save a matching colour bar alongside.
+
 ## v1.3 — 2026-10-22
 - Colour ramp shown up the y-axis of the histogram.
 - **Log values (X)** option: log x-axis (symmetric log for data with zero/negative values).

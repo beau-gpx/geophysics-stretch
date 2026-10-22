@@ -15,12 +15,14 @@ from qgis.PyQt.QtWidgets import (
 from qgis.core import (
     Qgis, QgsRasterLayer, QgsRectangle, QgsColorRampShader,
     QgsRasterShader, QgsSingleBandPseudoColorRenderer, QgsGradientColorRamp,
-    QgsGradientStop, QgsMapLayerProxyModel,
+    QgsGradientStop, QgsMapLayerProxyModel, QgsProject,
 )
 from qgis.gui import QgsMapLayerComboBox, QgsRasterBandComboBox, QgsColorRampButton
 
 from . import stretch
 from . import exporter
+from . import colourbar
+from .colourbar_dialog import ColourBarDialog, stored_settings as colourbar_settings
 from .curve_widget import CurveWidget, E
 from .export_dialog import ExportDialog
 
@@ -200,6 +202,11 @@ class StretchDock(QDockWidget):
         g.addWidget(QLabel('Band'), 1, 0)
         self.bandCombo = QgsRasterBandComboBox()
         g.addWidget(self.bandCombo, 1, 1)
+        self.chkSync = QCheckBox('Sync with Layers panel')
+        self.chkSync.setChecked(True)
+        self.chkSync.setToolTip('Picking a grid here selects it in the Layers panel (expanding its group),\n'
+                                'and selecting a raster in the Layers panel opens it here.')
+        g.addWidget(self.chkSync, 2, 1)
         lay.addLayout(g)
 
         # curve + undo/redo
@@ -338,8 +345,12 @@ class StretchDock(QDockWidget):
         # export
         row = QHBoxLayout()
         self.btnExport = QPushButton('Export image…')
-        self.btnStyle = QPushButton('Save style (.qml)…')
+        self.btnBar = QPushButton('Colour bar…')
+        self.btnBar.setToolTip('Export a colour bar / legend for this stretch (PNG, SVG or PDF)')
+        self.btnStyle = QPushButton('Save style…')
+        self.btnStyle.setToolTip('Save the stretch as a QGIS style file (.qml)')
         row.addWidget(self.btnExport)
+        row.addWidget(self.btnBar)
         row.addWidget(self.btnStyle)
         lay.addLayout(row)
 
@@ -377,10 +388,18 @@ class StretchDock(QDockWidget):
         self.btnRedo.clicked.connect(self.redo)
         self.btnExport.clicked.connect(self.export_image)
         self.btnStyle.clicked.connect(self.save_style)
+        self.btnBar.clicked.connect(self.export_colourbar)
+        self._syncing = False
+        self.iface.currentLayerChanged.connect(self.on_active_layer)
 
         self.on_clip_mode()
         self.update_lut()
         self.update_undo_buttons()
+        active = self.iface.activeLayer()      # open on the grid already selected in the Layers panel
+        if isinstance(active, QgsRasterLayer):
+            self.layerCombo.blockSignals(True)
+            self.layerCombo.setLayer(active)
+            self.layerCombo.blockSignals(False)
         self.on_layer(self.layerCombo.currentLayer())
 
     # ------------------------------------------------ loading
@@ -388,6 +407,47 @@ class StretchDock(QDockWidget):
         self.layer = layer if isinstance(layer, QgsRasterLayer) else None
         self.bandCombo.setLayer(self.layer)
         self.on_band(self.bandCombo.currentBand())
+        if self.layer is not None and self.chkSync.isChecked():
+            self.show_in_layers_panel(self.layer)
+
+    # ------------------------------------------------ Layers panel sync
+    def show_in_layers_panel(self, layer):
+        """Make layer the active layer: expand its groups, select and scroll to it."""
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            node = QgsProject.instance().layerTreeRoot().findLayer(layer.id())
+            parent = node.parent() if node else None
+            while parent is not None:
+                if hasattr(parent, 'setExpanded'):
+                    parent.setExpanded(True)
+                parent = parent.parent()
+            self.iface.setActiveLayer(layer)
+            view = self.iface.layerTreeView()
+            if view is not None:
+                view.setCurrentLayer(layer)
+                view.scrollTo(view.currentIndex())
+        except Exception:
+            pass
+        finally:
+            self._syncing = False
+
+    def on_active_layer(self, layer):
+        if self._syncing or not self.chkSync.isChecked():
+            return
+        if isinstance(layer, QgsRasterLayer) and layer is not self.layer:
+            self._syncing = True
+            try:
+                self.layerCombo.setLayer(layer)
+            finally:
+                self._syncing = False
+
+    def cleanup(self):
+        try:
+            self.iface.currentLayerChanged.disconnect(self.on_active_layer)
+        except Exception:
+            pass
 
     def on_band(self, band):
         self.sample = None
@@ -746,13 +806,44 @@ class StretchDock(QDockWidget):
         base = os.path.splitext(src)[0] if os.path.exists(src) else os.path.join(os.path.expanduser('~'), self.layer.name())
         return base + '_stretch' + ext
 
+    # ------------------------------------------------ colour bar
+    def export_colourbar(self):
+        if self.layer is None or len(self.curve.nodes) < 2:
+            return
+        nodes = [list(n) for n in self.curve.nodes]
+        dlg = ColourBarDialog(self.layer.name(), nodes, self.lut_q, parent=self)
+        if not dlg.exec():
+            return
+        s = dlg.settings()
+        ext = '.' + s['fmt']
+        path, _ = QFileDialog.getSaveFileName(self, 'Save colour bar', self._default_name('_colourbar' + ext),
+                                              f"{s['fmt'].upper()} (*{ext})")
+        if not path:
+            return
+        if not path.lower().endswith(ext):
+            path += ext
+        try:
+            colourbar.save(path, s, dlg.bar_title(), nodes, self.lut_q)
+        except Exception as e:
+            QMessageBox.warning(self, 'Stretch Editor', f'Could not save the colour bar:\n{e}')
+            return
+        self.iface.messageBar().pushSuccess('Stretch Editor', f'Saved colour bar {os.path.basename(path)}')
+
+    def colourbar_settings_dialog(self, parent):
+        """Edit the remembered colour bar settings (from the image export dialog)."""
+        if self.layer is None or len(self.curve.nodes) < 2:
+            return
+        ColourBarDialog(self.layer.name(), [list(n) for n in self.curve.nodes], self.lut_q,
+                        settings_only=True, parent=parent).exec()
+
     # ------------------------------------------------ export
     def export_image(self):
         if self.layer is None or len(self.curve.nodes) < 2:
             return
         lyr, prov, band = self.layer, self.layer.dataProvider(), self.bandCombo.currentBand()
         ext = lyr.extent()
-        dlg = ExportDialog(lyr.width(), lyr.height(), ext.width(), ext.height(), _map_units(lyr), self)
+        dlg = ExportDialog(lyr.width(), lyr.height(), ext.width(), ext.height(), _map_units(lyr), self,
+                           colourbar_cb=self.colourbar_settings_dialog)
         if not dlg.exec():
             return
         s = dlg.settings()
@@ -799,6 +890,14 @@ class StretchDock(QDockWidget):
             return
         size = os.path.getsize(out) / 1e6
         msg = f'Exported {os.path.basename(out)} ({size:,.1f} MB, {ow:,} × {oh:,} px)'
+        if s.get('colourbar'):
+            cbs = colourbar_settings()
+            bar_path = os.path.splitext(out)[0] + '_colourbar.' + cbs['fmt']
+            try:
+                colourbar.save(bar_path, cbs, lyr.name(), [list(n) for n in self.curve.nodes], self.lut_q)
+                msg += f' + {os.path.basename(bar_path)}'
+            except Exception as e:
+                msg += f' (colour bar failed: {e})'
         if not native and not resamp_ok:
             msg += f" — this layer's provider can't resample, so nearest neighbour was used"
         self.iface.messageBar().pushSuccess('Stretch Editor', msg)

@@ -4,7 +4,7 @@ import json
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QLabel, QDialogButtonBox, QWidget,
+    QLabel, QDialogButtonBox, QWidget, QPushButton,
 )
 from qgis.core import QgsSettings
 from qgis.gui import QgsColorButton
@@ -35,8 +35,9 @@ NOTES = {
 
 
 class ExportDialog(QDialog):
-    def __init__(self, width, height, ext_w, ext_h, units='', parent=None):
+    def __init__(self, width, height, ext_w, ext_h, units='', parent=None, colourbar_cb=None):
         super().__init__(parent)
+        self.colourbar_cb = colourbar_cb
         self.setWindowTitle('Export stretched image')
         self.w, self.h = width, height
         self.ext_w, self.ext_h = ext_w, ext_h
@@ -117,6 +118,19 @@ class ExportDialog(QDialog):
         self.addMap = QCheckBox('Add the exported image to the map')
         form.addRow('', self.addMap)
 
+        cbw = QWidget()
+        cbl = QHBoxLayout(cbw)
+        cbl.setContentsMargins(0, 0, 0, 0)
+        self.chkBar = QCheckBox('Also save a colour bar')
+        self.chkBar.setToolTip('Saved next to the image as <name>_colourbar.png/.svg/.pdf')
+        self.btnBar = QPushButton('Settings…')
+        self.btnBar.clicked.connect(lambda: self.colourbar_cb and self.colourbar_cb(self))
+        self.btnBar.setEnabled(self.colourbar_cb is not None)
+        cbl.addWidget(self.chkBar)
+        cbl.addWidget(self.btnBar)
+        cbl.addStretch()
+        form.addRow('', cbw)
+
         self.note = QLabel()
         self.note.setWordWrap(True)
         self.note.setStyleSheet('color: gray;')
@@ -175,6 +189,7 @@ class ExportDialog(QDialog):
         self._select(self.resamp, s['resampling'])
         self.ovr.setChecked(s['overviews'])
         self.addMap.setChecked(s['add_to_map'])
+        self.chkBar.setChecked(bool(s.get('colourbar')))
         self._busy = False
         self.refresh()
 
@@ -190,7 +205,7 @@ class ExportDialog(QDialog):
             transparency=self.transp.currentData(), bg=[c.red(), c.green(), c.blue()],
             res_mode=self.resMode.currentData(), scale=self.scale.value(), cell=self.cell.value(),
             resampling=self.resamp.currentData(), overviews=self.ovr.isChecked(),
-            add_to_map=self.addMap.isChecked()))
+            add_to_map=self.addMap.isChecked(), colourbar=self.chkBar.isChecked()))
 
     def accept(self):
         QgsSettings().setValue(SETTINGS_KEY, json.dumps(self.settings()))

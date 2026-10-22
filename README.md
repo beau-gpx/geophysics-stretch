@@ -7,6 +7,11 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
 2. Choose `stretch_editor.zip` → **Install Plugin** (this replaces an older version)
 3. Open it from the toolbar icon or **Raster → Stretch Editor**. It docks on the right.
 
+## Choosing the grid
+- Pick the layer and band at the top. With **Sync with Layers panel** ticked (the default), the
+  grid you pick is selected in the Layers panel, with its group expanded and scrolled into view,
+  and selecting a raster in the Layers panel opens it in the editor.
+
 ## Editing the curve
 - The panel shows the data histogram and the transfer curve (data value → position along the
   colour ramp). The colour ramp runs up the y-axis, and a strip under the x-axis shows the
@@ -46,6 +51,14 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
   with the layer, so they come back when you reopen the project.
 - **Save style (.qml)** saves the stretch as a QGIS style for reuse.
 
+## Colour bar
+- **Colour bar…** saves a colour bar / legend for the current stretch as PNG, SVG (vector,
+  editable) or PDF, with a live preview.
+- Options: title and units, vertical or horizontal, bar length and thickness, number of labels,
+  label spacing (evenly along the bar, which suits histogram-equalised stretches, or round
+  numbers), decimals, text size, transparent or white background, PNG resolution.
+- The layer's legend in QGIS print layouts also shows the stretch as a continuous ramp.
+
 ## Export image
 Choose in the export dialog (your last settings are remembered):
 - **Format:** Cloud-Optimised GeoTIFF, tiled GeoTIFF, JPEG2000, PNG + world file, JPEG + world file
@@ -56,7 +69,8 @@ Choose in the export dialog (your last settings are remembered):
 - **Resolution:** an exact **cell size** in map units (the default, starting at the grid's native
   cell) or a scale (1–1000 % of native), finer or coarser than the grid, with nearest, bilinear, cubic or average resampling. The output size
   and cell size are shown.
-- **Overviews** for fast display, and **add to map** when done
+- **Overviews** for fast display, **add to map** when done, and **also save a colour bar**
+  next to the image (using your colour bar settings)
 
 Options this QGIS's GDAL can't write are greyed out, and a note under the options explains the
 trade-offs of the current choice.

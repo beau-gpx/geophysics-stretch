@@ -43,7 +43,7 @@ RESAMPLING = {'nearest': 'Nearest neighbour', 'bilinear': 'Bilinear', 'cubic': '
 DEFAULTS = dict(format='COG', compression='WEBP', lossless=False, quality=90, level=6,
                 jp2_size=10, transparency='alpha', bg=[255, 255, 255],
                 res_mode='cell', scale=100, cell=0.0, resampling='bilinear',
-                overviews=True, add_to_map=True)
+                overviews=True, add_to_map=True, colourbar=False)
 
 MAX_SCALE = 1000
 
