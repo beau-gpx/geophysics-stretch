@@ -28,11 +28,13 @@ a georeferenced image with a transparent collar and a matching colour bar.
    click **Install Plugin**. Installing a newer ZIP replaces the old version.
 3. Open the editor from its toolbar button or **Raster → Stretch Editor**. It docks on the right.
 
-Requires QGIS 3.22 or later, including QGIS 4.
+Requires QGIS 3.22 or later, including QGIS 4, on Windows, macOS or Linux. There are no extra
+dependencies: it uses NumPy and GDAL, which come with QGIS.
 
 ## Quick start
 
-1. Select a single-band raster in the Layers panel. The editor opens on it.
+1. Select a single-band raster in the Layers panel. The editor opens on it. No grid to hand? Use
+   **Raster → Stretch Editor → Load sample data** (see below).
 2. Click **Hist. equalise** (or Linear / Log-linear).
 3. Adjust the **Clip limits**, or drag nodes on the curve. The map updates as you go.
 4. Use **Export image…**, **Colour bar…** or **Save style…** when you're happy with it.
@@ -116,6 +118,20 @@ software, **PNG** or **JPEG** for reports and slides.
 number of labels, decimals, text size and background. Labels can be *evenly spaced along the bar*
 (best for histogram-equalised stretches) or *round numbers* (best for linear ones).
 
+## Sample data
+**Raster → Stretch Editor → Load sample data** adds three small synthetic grids in a group, zooms to
+them and opens the editor:
+
+| Grid | What it is | Good for trying |
+| --- | --- | --- |
+| Sample TMI (nT) | Total magnetic intensity: buried bodies, dykes and a faulted unit | Hist. equalise, colour bar |
+| Sample TMI 1VD (nT/m) | Its first vertical derivative, straddling zero | Mirror about centre, Slope |
+| Sample potassium (%) | Radiometric potassium, all positive and skewed | Log-linear, Log values (X) |
+
+Each is 400 × 320 cells of 50 m, with nodata outside an irregular survey outline (handy for testing
+transparent exports). The grids are made up by `scripts/make_sample_data.py`, sit at arbitrary
+coordinates, and are free to use for any purpose (CC0). They live in `stretch_editor/sample_data/`.
+
 ## Tips
 - **Sun shading:** duplicate the grid, style the copy as *Hillshade*, put it above the coloured
   layer and set its blending mode to *Multiply*.
@@ -133,8 +149,10 @@ stretch_editor/          the plugin (this folder is what goes in the ZIP)
   state.py               settings saved with each layer
   legend.py              drawing the colour bar
   compat.py              QGIS 3 / QGIS 4 compatibility helpers
-tests/                   unit tests for core/ (no QGIS needed)
-scripts/build_zip.py     builds the installable ZIP into dist/
+  sample_data/           synthetic test grids (GeoTIFF)
+tests/                   unit tests for core/ and the sample data (no QGIS needed)
+scripts/build_zip.py     builds the installable ZIP into dist/ and checks it against QGIS repository rules
+scripts/make_sample_data.py  regenerates the sample grids (needs numpy and tifffile)
 ```
 
 ```

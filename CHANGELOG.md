@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.0.1 — 2026-10-22
+- Synthetic sample dataset (TMI, 1VD and potassium GeoTIFFs with a nodata collar) for trying
+  and testing the plugin, plus **Raster → Stretch Editor → Load sample data**.
+- Plugin About text states there are no extra dependencies.
+- Build script checks the ZIP against the QGIS plugin repository rules (size, hidden files,
+  binaries, LICENSE).
+
 ## v2.0 — 2026-10-22
 First public release.
 - Published at https://github.com/beau-gpx/geophysics-stretch under the GPL v2 or later.
