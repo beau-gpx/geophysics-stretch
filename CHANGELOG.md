@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.6.1 — 2026-10-22
+- The histogram/curve editor keeps a square plot area; its height follows the panel width.
+
 ## v1.6 — 2026-10-22
 - Fix: the panel now scrolls, so controls below the visible area (including the Advanced box)
   can always be reached.

@@ -10,11 +10,11 @@ Ctrl+Z / Ctrl+Y               -> undo / redo (while the curve has focus)
 import numpy as np
 
 try:
-    from qgis.PyQt.QtCore import Qt, pyqtSignal, QPointF, QRectF, QEvent
+    from qgis.PyQt.QtCore import Qt, pyqtSignal, QPointF, QRectF, QEvent, QSize
     from qgis.PyQt.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont, QPolygonF
     from qgis.PyQt.QtWidgets import QWidget, QSizePolicy
 except ImportError:  # allows testing outside QGIS
-    from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QEvent
+    from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QEvent, QSize
     from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont, QPolygonF
     from PyQt5.QtWidgets import QWidget, QSizePolicy
 
@@ -58,8 +58,10 @@ class CurveWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(230)
-        self.setSizePolicy(E(QSizePolicy, 'Policy.Expanding'), E(QSizePolicy, 'Policy.Expanding'))
+        sp = QSizePolicy(E(QSizePolicy, 'Policy.Expanding'), E(QSizePolicy, 'Policy.Preferred'))
+        sp.setHeightForWidth(True)          # keep the plot area square
+        self.setSizePolicy(sp)
+        self.setMinimumWidth(200)
         self.setMouseTracking(True)
         self.setFocusPolicy(E(Qt, 'FocusPolicy.StrongFocus'))
         self.nodes = []
@@ -192,6 +194,23 @@ class CurveWidget(QWidget):
             self.curveEdited.emit()
 
     # ---------- geometry ----------
+    def _margins(self):
+        """(horizontal, vertical) space around the plot area."""
+        return 8 + self.YSTRIP_W + 4 + 8, 16 + self.STRIP_H + 18
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, w):
+        mh, mv = self._margins()
+        return max(120, w - mh) + mv       # square plot area
+
+    def sizeHint(self):
+        return QSize(340, self.heightForWidth(340))
+
+    def minimumSizeHint(self):
+        return QSize(200, self.heightForWidth(200))
+
     def _plot(self):
         r = self.rect()
         left = 8 + self.YSTRIP_W + 4

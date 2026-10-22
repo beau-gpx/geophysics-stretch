@@ -236,7 +236,7 @@ class StretchDock(QDockWidget):
 
         # curve + undo/redo
         self.curve = CurveWidget()
-        lay.addWidget(self.curve, 1)
+        lay.addWidget(self.curve)
         row = QHBoxLayout()
         hint = QLabel('Click add · drag move (onto a node to merge) · right-click delete · wheel zoom · Shift-drag pan')
         hint.setStyleSheet('color: gray; font-size: 8pt;')
