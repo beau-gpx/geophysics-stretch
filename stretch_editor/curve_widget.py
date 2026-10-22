@@ -3,7 +3,7 @@
 Left-click empty space        -> add a node (and drag it)
 Left-drag a node              -> move it (drop it onto a neighbour to merge)
 Right-click a node / Delete   -> remove it (minimum two nodes)
-Mouse wheel                   -> zoom the x-axis around the cursor
+Shift + mouse wheel           -> zoom the x-axis around the cursor
 Middle-drag or Shift+drag     -> pan the x-axis
 Ctrl+Z / Ctrl+Y               -> undo / redo (while the curve has focus)
 """
@@ -201,9 +201,11 @@ class CurveWidget(QWidget):
     def hasHeightForWidth(self):
         return True
 
+    ASPECT = 0.75    # plot height : width (3:4)
+
     def heightForWidth(self, w):
         mh, mv = self._margins()
-        return max(120, w - mh) + mv       # square plot area
+        return max(90, round((w - mh) * self.ASPECT)) + mv
 
     def sizeHint(self):
         return QSize(340, self.heightForWidth(340))
@@ -468,8 +470,13 @@ class CurveWidget(QWidget):
             self.curveEdited.emit()
 
     def wheelEvent(self, ev):
-        d = ev.angleDelta().y()
+        if not self._shift(ev):
+            ev.ignore()                 # plain wheel scrolls the panel; Shift+wheel zooms
+            return
+        a = ev.angleDelta()
+        d = a.y() or a.x()              # Shift turns the wheel horizontal on some systems
         if not d:
+            ev.accept()
             return
         pr = self._plot()
         mx, _ = _pos(ev)

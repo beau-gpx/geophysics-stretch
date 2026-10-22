@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.6.2 — 2026-10-22
+- Histogram/curve editor plot area is 3:4 (height : width) instead of square.
+- Zooming the histogram needs **Shift + mouse wheel**; the plain wheel scrolls the panel.
+
 ## v1.6.1 — 2026-10-22
 - The histogram/curve editor keeps a square plot area; its height follows the panel width.
 
