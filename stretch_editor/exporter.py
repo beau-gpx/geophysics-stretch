@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Beau Garland
 """Export the stretched grid as an RGB(A) image with GDAL (no QGIS imports)."""
 import os
 import tempfile

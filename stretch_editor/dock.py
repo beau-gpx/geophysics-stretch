@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Beau Garland
 """Dock widget: layer/band selection, curve editing, presets, undo/redo, live apply and export."""
 import copy
 import json

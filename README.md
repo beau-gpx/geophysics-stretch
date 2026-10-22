@@ -105,3 +105,13 @@ trade-offs of the current choice.
   the coloured layer and set its blending mode to *Multiply*.
 - Values beyond ±1e30 and the layer's nodata value are treated as transparent.
 - Works with QGIS 3.22 or later, including QGIS 4 (Qt6).
+
+## Licence
+Copyright (C) 2026 Beau Garland.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 2 of the
+License, or (at your option) any later version. It is distributed in the hope that it will be
+useful, but WITHOUT ANY WARRANTY; see [LICENSE](LICENSE) for the full text.
+
+Contact: beau.gpx@pm.me

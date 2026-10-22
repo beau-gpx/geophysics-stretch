@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Beau Garland
 """Colour bar settings dialog with a live preview."""
 import json
 

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Beau Garland
 """Pure-numpy stretch maths (no QGIS dependency, so it can be unit tested).
 
 A stretch is a list of nodes [[data_value, output], ...] with data values

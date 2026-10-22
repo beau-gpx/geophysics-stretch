@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+- Licensed under GPL v2 or later (LICENSE file, SPDX headers in source files).
+- Contact email added to plugin metadata.
+
 ## v1.6.2 — 2026-10-22
 - Histogram/curve editor plot area is 3:4 (height : width) instead of square.
 - Zooming the histogram needs **Shift + mouse wheel**; the plain wheel scrolls the panel.

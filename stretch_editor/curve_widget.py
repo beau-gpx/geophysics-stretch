@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Beau Garland
 """Interactive histogram + transfer-curve editor (ER Mapper style).
 
 Left-click empty space        -> add a node (and drag it)

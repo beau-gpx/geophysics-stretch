@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Beau Garland
 """Colour bar (legend) for a stretch: tick maths (pure numpy) and Qt rendering to PNG/SVG/PDF."""
 import math
 
