@@ -266,7 +266,11 @@ class StretchDock(QDockWidget):
         self.btnViewData.setToolTip('Show the full data range (min to max)')
         self.btnViewCurve = QToolButton()
         self.btnViewCurve.setText('Curve')
-        self.btnViewCurve.setToolTip('Fit the view to the curve nodes')
+        self.btnViewCurve.setToolTip('Fit the view to the curve nodes, and keep it fitted\n'
+                                     'when the clip limits change')
+        for b in (self.btnViewData, self.btnViewCurve):
+            b.setCheckable(True)
+        self.view_mode = 'data'     # 'data' | 'curve' | 'free' (zoomed/panned/typed)
         row.addWidget(self.btnViewData)
         row.addWidget(self.btnViewCurve)
         lay.addLayout(row)
@@ -563,6 +567,7 @@ class StretchDock(QDockWidget):
             self._set_quiet(self.clipHi, clip.get('hi', nodes[-1][0]))
             self.curve.set_nodes(nodes)
             view = state.get('view') or (dlo, dhi)
+            view_mode = state.get('view_mode', 'free' if state.get('view') else 'data')
         else:
             self.last_preset, self.edited = 'linear', False
             current = existing_stretch_range(self.layer, band)
@@ -576,8 +581,9 @@ class StretchDock(QDockWidget):
             self._set_quiet(self.clipHi, hi)
             self.curve.set_nodes(self._run_preset('linear'))
             view = (dlo, dhi)
+            view_mode = 'data'
         self.on_clip_mode(fill=False)
-        self.set_view(*view)
+        self.set_view(*view, view_mode)
         self.sync_points()
         self._loading = False
         self.reset_history()
@@ -611,27 +617,40 @@ class StretchDock(QDockWidget):
         widget.blockSignals(False)
 
     # ------------------------------------------------ view range
-    def set_view(self, lo, hi):
+    def set_view(self, lo, hi, mode=None):
+        if mode:
+            self.set_view_mode(mode)
         self.curve.set_view(lo, hi)
         self._set_quiet(self.viewLo, self.curve.lo)
         self._set_quiet(self.viewHi, self.curve.hi)
         self.save_state()
 
+    def set_view_mode(self, mode):
+        self.view_mode = mode
+        self._set_quiet_check(self.btnViewData, mode == 'data')
+        self._set_quiet_check(self.btnViewCurve, mode == 'curve')
+
     def on_curve_view(self, lo, hi):      # wheel / pan in the editor
+        self.set_view_mode('free')
         self._set_quiet(self.viewLo, lo)
         self._set_quiet(self.viewHi, hi)
         self.save_state()
 
     def on_view_spin(self, *_):
         if self.viewHi.value() > self.viewLo.value():
-            self.set_view(self.viewLo.value(), self.viewHi.value())
+            self.set_view(self.viewLo.value(), self.viewHi.value(), 'free')
 
     def view_data(self):
         if self.sample is not None:
-            self.set_view(*stretch.data_range(self.sample))
+            self.set_view(*stretch.data_range(self.sample), 'data')
 
     def view_curve(self):
         if len(self.curve.nodes) >= 2:
+            self.set_view(*stretch.fit_curve_view(self.curve.nodes), 'curve')
+
+    def follow_curve(self):
+        """In Curve view, re-fit the x-axis after the curve's ends move (clip changes)."""
+        if self.view_mode == 'curve' and len(self.curve.nodes) >= 2:
             self.set_view(*stretch.fit_curve_view(self.curve.nodes))
 
     # ------------------------------------------------ clip limits
@@ -688,6 +707,7 @@ class StretchDock(QDockWidget):
         else:
             nodes = self._run_preset(self.last_preset)
         self.curve.set_nodes(nodes)
+        self.follow_curve()
         self.commit()
 
     # ------------------------------------------------ mirror about centre
@@ -704,6 +724,7 @@ class StretchDock(QDockWidget):
             lo, hi = self.clip_range()
             self._set_quiet(self.clipLo, lo)
             self._set_quiet(self.clipHi, hi)
+            self.follow_curve()
             self.commit()
         else:
             self.save_state()
@@ -722,6 +743,7 @@ class StretchDock(QDockWidget):
         self._set_quiet(self.clipLo, lo)
         self._set_quiet(self.clipHi, hi)
         self.curve.set_nodes(nodes or self._run_preset(self.last_preset))
+        self.follow_curve()
         self.commit()
 
     # ------------------------------------------------ presets / points
@@ -906,6 +928,7 @@ class StretchDock(QDockWidget):
                           'lower': self.pctLo.value(), 'upper': self.pctHi.value(),
                           'lo': self.clipLo.value(), 'hi': self.clipHi.value()},
                  'view': [self.curve.lo, self.curve.hi],
+                 'view_mode': self.view_mode,
                  'display': {'log_counts': self.chkLogHist.isChecked(), 'log_x': self.chkLogX.isChecked()},
                  'mirror': {'on': self.chkMirror.isChecked(), 'centre': self.centre.value()},
                  'ramp': ramp_to_props(ramp) if ramp else {}}

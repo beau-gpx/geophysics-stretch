@@ -34,7 +34,9 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
 ## View range
 - The histogram opens showing the full data range (min to max).
 - Set the x-axis range exactly with the **View** fields, zoom with the mouse wheel, or pan with
-  Shift+drag or middle-drag. **Data** resets to min–max; **Curve** sets the view to exactly the first and last nodes.
+  Shift+drag or middle-drag. **Data** shows min–max and stays there. **Curve** fits the view to exactly the first and last
+  nodes, and re-fits automatically when you change the clip limits. Zooming, panning or typing a
+  range gives a free view that stays where you put it. The active button is highlighted.
 - Nodes outside the view are shown as orange arrows at the edge.
 
 ## Clip limits

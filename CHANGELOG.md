@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.1 — 2026-10-22
+- In **Curve** view, the x-axis re-fits automatically when the clip limits (or mirror centre)
+  change. **Data** view and free (zoomed/panned/typed) views are left alone.
+- Data and Curve buttons stay highlighted to show the current view mode (saved with the layer).
+
 ## v1.5 — 2026-10-22
 - **Mirror about centre** (in a collapsed Advanced box): symmetric stretch about a centre
   value (0 or median by one click) for grids like 1VD. Presets on distance from centre,
