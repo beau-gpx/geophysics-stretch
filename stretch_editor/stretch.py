@@ -110,6 +110,17 @@ def mirror(nodes, c, side='pos'):
     return sanitize(neg + [[c, 0.5]] + src)
 
 
+def reslope(nodes, factor):
+    """Change the contrast around the middle of the ramp (output 0.5).
+    Each output moves to 0.5 ± 0.5·|2(y − 0.5)|**factor; factor < 1 steepens the curve near
+    the centre (more contrast for small values), factor > 1 flattens it. Ends stay put."""
+    out = []
+    for x, y in nodes:
+        d = 2.0 * (y - 0.5)
+        out.append([x, 0.5 + 0.5 * np.sign(d) * abs(d) ** factor])
+    return sanitize(out)
+
+
 def is_symmetric(nodes, c, tol=1e-9):
     xs = np.array([p[0] for p in nodes])
     ys = np.array([p[1] for p in nodes])

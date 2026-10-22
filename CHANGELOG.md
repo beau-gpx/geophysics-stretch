@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.6 — 2026-10-22
+- Fix: the panel now scrolls, so controls below the visible area (including the Advanced box)
+  can always be reached.
+- Mirror mode: **Width ±** (half-width around the centre) and **Slope** (contrast around the
+  centre) controls.
+
 ## v1.5.2 — 2026-10-22
 - **Reset** button for clip limits: back to Percentile 0 % – 100 % (data min to max; in mirror
   mode, centre ± the largest distance from the centre).

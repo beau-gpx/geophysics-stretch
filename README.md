@@ -2,6 +2,9 @@
 
 ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics, DEMs).
 
+The panel scrolls if the dock is shorter than its contents; the **Advanced** box is at the
+bottom of the clip settings.
+
 ## Install / update
 1. QGIS → **Plugins → Manage and Install Plugins → Install from ZIP**
 2. Choose `stretch_editor.zip` → **Install Plugin** (this replaces an older version)
@@ -58,6 +61,11 @@ symmetric about a centre value. This suits grids that straddle zero, such as mag
 - Clip limits become centre ± R. In Percentile mode, R is the Upper percentile of
   |value − centre|, and Lower is not used.
 - Points step by two, since a mirrored curve always has a centre node.
+- **Width ±** sets the half-width of the stretch around the centre directly (clip limits become
+  centre ± width, in Values mode). It also shows the current width.
+- **Slope** sets the contrast around the centre: 1 = the preset as is; above 1 makes the curve
+  steeper near the centre so small anomalies stand out; below 1 flattens it and puts more
+  contrast in the tails. It works on presets and hand-edited curves.
 
 ## Colour and saving
 - **Colour ramp:** any QGIS ramp (default is an ER Mapper-like pseudocolour); invert it from

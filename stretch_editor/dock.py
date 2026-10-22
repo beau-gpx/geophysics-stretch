@@ -8,6 +8,7 @@ import numpy as np
 from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
+    QScrollArea, QFrame,
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QDoubleSpinBox, QSpinBox, QCheckBox, QComboBox, QFileDialog,
     QMessageBox, QProgressDialog, QApplication, QGroupBox, QToolButton,
@@ -362,7 +363,26 @@ class StretchDock(QDockWidget):
         self.btnCentreMed.setToolTip('Centre on the data median')
         ag.addWidget(self.btnCentre0, 1, 2)
         ag.addWidget(self.btnCentreMed, 1, 3)
+        self.lblWidth = QLabel('Width ±')
+        self.width = _dspin()
+        self.width.setMinimum(0.0)
+        self.width.setToolTip('Half-width of the stretch around the centre (clip limits = centre ± width)')
+        ag.addWidget(self.lblWidth, 2, 0)
+        ag.addWidget(self.width, 2, 1, 1, 3)
+        self.lblSlope = QLabel('Slope')
+        self.slope = QDoubleSpinBox()
+        self.slope.setRange(0.2, 5.0)
+        self.slope.setDecimals(2)
+        self.slope.setSingleStep(0.1)
+        self.slope.setValue(1.0)
+        self.slope.setKeyboardTracking(False)
+        self.slope.setToolTip('Contrast around the centre. 1 = the preset as is;\n'
+                              'above 1 = steeper near the centre (small values stand out more);\n'
+                              'below 1 = flatter near the centre (more contrast in the tails).')
+        ag.addWidget(self.lblSlope, 3, 0)
+        ag.addWidget(self.slope, 3, 1, 1, 3)
         lay.addWidget(adv)
+        self._slope_prev = 1.0
         self._centre_prev = 0.0
 
         # selected node
@@ -411,7 +431,11 @@ class StretchDock(QDockWidget):
         row.addWidget(self.btnStyle)
         lay.addLayout(row)
 
-        self.setWidget(w)
+        scroll = QScrollArea()                # the panel scrolls when the dock is shorter than it
+        scroll.setWidget(w)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(E(QFrame, 'Shape.NoFrame'))
+        self.setWidget(scroll)
 
         # signals (Ctrl+Z / Ctrl+Y / Delete are handled by the curve while it has focus)
         self.curve.undoRequested.connect(self.undo)
@@ -449,6 +473,8 @@ class StretchDock(QDockWidget):
         self.btnBar.clicked.connect(self.export_colourbar)
         self.chkMirror.toggled.connect(self.on_mirror)
         self.centre.valueChanged.connect(self.on_centre)
+        self.width.valueChanged.connect(self.on_width)
+        self.slope.valueChanged.connect(self.on_slope)
         self.btnCentre0.clicked.connect(lambda: self.centre.setValue(0.0))
         self.btnCentreMed.clicked.connect(
             lambda: self.sample is not None and self.centre.setValue(float(np.median(self.sample))))
@@ -456,6 +482,7 @@ class StretchDock(QDockWidget):
         self.iface.currentLayerChanged.connect(self.on_active_layer)
 
         self.on_clip_mode()
+        self.update_mirror_widgets()
         self.update_lut()
         self.update_undo_buttons()
         active = self.iface.activeLayer()      # open on the grid already selected in the Layers panel
@@ -550,6 +577,8 @@ class StretchDock(QDockWidget):
         self._set_quiet(self.centre, mir.get('centre', 0.0))
         self._centre_prev = self.centre.value()
         self._set_quiet_check(self.chkMirror, mir.get('on', False))
+        self._set_quiet(self.slope, mir.get('slope', 1.0))
+        self._slope_prev = self.slope.value()
         self.curve.set_mirror(self.centre.value() if self.chkMirror.isChecked() else None)
         if state and state.get('band') == band and len(state.get('nodes', [])) >= 2:
             ramp = ramp_from_props(state.get('ramp', {}))
@@ -588,6 +617,7 @@ class StretchDock(QDockWidget):
             view = (dlo, dhi)
             view_mode = 'data'
         self.on_clip_mode(fill=False)
+        self.update_mirror_widgets()
         self.set_view(*view, view_mode)
         self.sync_points()
         self._loading = False
@@ -712,6 +742,8 @@ class StretchDock(QDockWidget):
         if self.clipMode.currentData() == 'pct' or self.mirroring():
             self._set_quiet(self.clipLo, lo)
             self._set_quiet(self.clipHi, hi)
+        if self.mirroring():
+            self._set_quiet(self.width, (hi - lo) / 2.0)
         if self.edited:
             nodes = stretch.rescale(self.curve.nodes, lo, hi)   # keep the hand-edited shape
             if self.mirroring():
@@ -723,8 +755,39 @@ class StretchDock(QDockWidget):
         self.commit()
 
     # ------------------------------------------------ mirror about centre
+    def update_mirror_widgets(self):
+        on = self.chkMirror.isChecked()
+        for wdg in (self.lblWidth, self.width, self.lblSlope, self.slope):
+            wdg.setEnabled(on)
+        if on and self.sample is not None:
+            lo, hi = self.clip_range()
+            self._set_quiet(self.width, (hi - lo) / 2.0)
+
+    def on_width(self, r):
+        """Width ± edits the clip limits directly (switches them to Values)."""
+        if not self.mirroring() or self._loading or not r > 0:
+            return
+        c = self.centre.value()
+        self._set_quiet(self.clipMode, 'val')
+        self._set_quiet(self.clipLo, c - r)
+        self._set_quiet(self.clipHi, c + r)
+        self.on_clip_mode(fill=False)
+
+    def on_slope(self, s):
+        old, self._slope_prev = self._slope_prev, s
+        if not self.mirroring() or self._loading or len(self.curve.nodes) < 2:
+            self.save_state()
+            return
+        if self.edited:
+            nodes = stretch.mirror(stretch.reslope(self.curve.nodes, old / s), self.centre.value(), 'pos')
+        else:
+            nodes = None
+        self.curve.set_nodes(nodes or self._run_preset(self.last_preset))
+        self.commit()
+
     def on_mirror(self, on):
         self.curve.set_mirror(self.centre.value() if on else None)
+        self.update_mirror_widgets()
         for wdg in (self.pctLo, self.lblPLo):
             wdg.setEnabled(self.clipMode.currentData() == 'pct' and not on)
         self._centre_prev = self.centre.value()
@@ -754,6 +817,7 @@ class StretchDock(QDockWidget):
         lo, hi = self.clip_range()
         self._set_quiet(self.clipLo, lo)
         self._set_quiet(self.clipHi, hi)
+        self._set_quiet(self.width, (hi - lo) / 2.0)
         self.curve.set_nodes(nodes or self._run_preset(self.last_preset))
         self.follow_curve()
         self.commit()
@@ -764,7 +828,8 @@ class StretchDock(QDockWidget):
         n = n or self.preset_points.get(kind, DEFAULT_POINTS[kind])
         if self.mirroring():
             c = self.centre.value()
-            return stretch.symmetric_preset(kind, self.sample, c, (hi - lo) / 2.0, n)
+            nodes = stretch.symmetric_preset(kind, self.sample, c, (hi - lo) / 2.0, n)
+            return stretch.reslope(nodes, 1.0 / self.slope.value()) if self.slope.value() != 1.0 else nodes
         return stretch.PRESETS[kind](self.sample, lo, hi, n)
 
     def preset(self, kind):
@@ -942,7 +1007,8 @@ class StretchDock(QDockWidget):
                  'view': [self.curve.lo, self.curve.hi],
                  'view_mode': self.view_mode,
                  'display': {'log_counts': self.chkLogHist.isChecked(), 'log_x': self.chkLogX.isChecked()},
-                 'mirror': {'on': self.chkMirror.isChecked(), 'centre': self.centre.value()},
+                 'mirror': {'on': self.chkMirror.isChecked(), 'centre': self.centre.value(),
+                            'slope': self.slope.value()},
                  'ramp': ramp_to_props(ramp) if ramp else {}}
         try:
             self.layer.setCustomProperty(PROP, json.dumps(state))
