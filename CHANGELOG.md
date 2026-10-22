@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Repository moved to its public home: https://github.com/beau-gpx/geophysics-stretch
 - Licensed under GPL v2 or later (LICENSE file, SPDX headers in source files).
 - Contact email added to plugin metadata.
 
