@@ -52,7 +52,8 @@ class CurveWidget(QWidget):
 
     HIT = 8          # px: grab radius for a node
     MERGE = 7        # px: drop a node this close to a neighbour to merge them
-    STRIP_H = 12
+    STRIP_H = 12     # colour strip under the x-axis
+    YSTRIP_W = 12    # colour strip up the y-axis
     BINS = 256
 
     def __init__(self, parent=None):
@@ -67,17 +68,28 @@ class CurveWidget(QWidget):
         self.lo, self.hi = 0.0, 1.0
         self.lut = None            # list of QColor
         self.log_hist = False
+        self.axis = stretch.LinearAxis()
         self.sel = -1
         self.drag = -1
         self.merge_with = -1
-        self.pan = None            # (start_px, lo, hi) while panning
+        self.pan = None            # (start_px, t_lo, t_hi) while panning (axis space)
         self.hover = ''
 
     # ---------- data ----------
     def set_sample(self, sample):
         self.sample = sample
+        if self.axis.log:
+            self.axis = stretch.LogAxis(sample) if sample is not None and sample.size else stretch.LinearAxis()
         self._recount()
         self.update()
+
+    def set_xlog(self, on):
+        """Show the x-axis (data values) on a log scale."""
+        if on and self.sample is not None and self.sample.size:
+            self.axis = stretch.LogAxis(self.sample)
+        else:
+            self.axis = stretch.LinearAxis()
+        self.set_view(self.lo, self.hi)
 
     def set_view(self, lo, hi):
         lo, hi = float(lo), float(hi)
@@ -85,15 +97,23 @@ class CurveWidget(QWidget):
             lo, hi = hi, lo
         if not hi > lo:
             hi = lo + max(abs(lo) * 1e-6, 1e-9)
-        self.lo, self.hi = lo, hi
+        self.lo, self.hi = self.axis.clamp(lo, hi)
         self._recount()
         self.update()
+
+    def _t(self, v):
+        return float(self.axis.fwd(v))
 
     def _recount(self):
         if self.sample is None or self.sample.size == 0:
             self.counts = None
             return
-        self.counts, _ = np.histogram(self.sample, bins=self.BINS, range=(self.lo, self.hi))
+        edges = self.axis.inv(np.linspace(self._t(self.lo), self._t(self.hi), self.BINS + 1))
+        edges = np.maximum.accumulate(edges)
+        if np.all(np.diff(edges) > 0):
+            self.counts, _ = np.histogram(self.sample, bins=edges)
+        else:
+            self.counts, _ = np.histogram(self.sample, bins=self.BINS, range=(self.lo, self.hi))
 
     def set_nodes(self, nodes):
         self.nodes = stretch.sanitize(nodes)
@@ -132,13 +152,16 @@ class CurveWidget(QWidget):
     # ---------- geometry ----------
     def _plot(self):
         r = self.rect()
-        return QRectF(8, 8, r.width() - 16, r.height() - 16 - self.STRIP_H - 18)
+        left = 8 + self.YSTRIP_W + 4
+        return QRectF(left, 8, r.width() - left - 8, r.height() - 16 - self.STRIP_H - 18)
 
     def _v2px(self, v, pr):
-        return pr.left() + (v - self.lo) / (self.hi - self.lo) * pr.width()
+        t0, t1 = self._t(self.lo), self._t(self.hi)
+        return pr.left() + (self._t(v) - t0) / (t1 - t0) * pr.width()
 
     def _px2v(self, px, pr):
-        return self.lo + (px - pr.left()) / pr.width() * (self.hi - self.lo)
+        t0, t1 = self._t(self.lo), self._t(self.hi)
+        return float(self.axis.inv(t0 + (px - pr.left()) / pr.width() * (t1 - t0)))
 
     def _y2py(self, y, pr):
         return pr.bottom() - y * pr.height()
@@ -206,6 +229,19 @@ class CurveWidget(QWidget):
             p.drawLine(QPointF(x, pr.top()), QPointF(x, pr.bottom()))
         p.drawRect(pr)
 
+        # colour stretch up the y-axis (output 0 at the bottom, 1 at the top)
+        if self.lut:
+            nl = len(self.lut)
+            sx = pr.left() - 4 - self.YSTRIP_W
+            hgt = int(pr.height())
+            for k in range(hgt + 1):
+                p.setPen(QPen(self.lut[int(round(k / max(hgt, 1) * (nl - 1)))], 1))
+                y = pr.bottom() - k
+                p.drawLine(QPointF(sx, y), QPointF(sx + self.YSTRIP_W, y))
+            p.setPen(QPen(grid, 1))
+            p.setBrush(E(Qt, 'BrushStyle.NoBrush'))
+            p.drawRect(QRectF(sx, pr.top(), self.YSTRIP_W, pr.height()))
+
         # histogram
         if self.counts is not None and len(self.counts):
             c = self.counts.astype(float)
@@ -224,7 +260,8 @@ class CurveWidget(QWidget):
 
         if len(self.nodes) >= 2:
             w = int(pr.width())
-            xs = self.lo + (np.arange(w + 1) / max(w, 1)) * (self.hi - self.lo)
+            t0, t1 = self._t(self.lo), self._t(self.hi)
+            xs = self.axis.inv(t0 + (np.arange(w + 1) / max(w, 1)) * (t1 - t0))
             ys = stretch.evaluate(self.nodes, xs)
 
             # curve
@@ -288,7 +325,7 @@ class CurveWidget(QWidget):
         mx, my = _pos(ev)
         btn = ev.button()
         if btn == E(Qt, 'MouseButton.MiddleButton') or (btn == E(Qt, 'MouseButton.LeftButton') and self._shift(ev)):
-            self.pan = (mx, self.lo, self.hi)
+            self.pan = (mx, self._t(self.lo), self._t(self.hi))
             self.setCursor(E(Qt, 'CursorShape.ClosedHandCursor'))
             return
         if not self.nodes:
@@ -318,9 +355,9 @@ class CurveWidget(QWidget):
         mx, my = _pos(ev)
         pr = self._plot()
         if self.pan:
-            x0, lo, hi = self.pan
-            dv = (mx - x0) / pr.width() * (hi - lo)
-            self.set_view(lo - dv, hi - dv)
+            x0, t0, t1 = self.pan
+            dt = (mx - x0) / pr.width() * (t1 - t0)
+            self.set_view(float(self.axis.inv(t0 - dt)), float(self.axis.inv(t1 - dt)))
             self.viewChanged.emit(self.lo, self.hi)
             return
         if self.drag >= 0:
@@ -360,9 +397,10 @@ class CurveWidget(QWidget):
             return
         pr = self._plot()
         mx, _ = _pos(ev)
-        anchor = self._px2v(min(max(mx, pr.left()), pr.right()), pr)
+        ta = self._t(self._px2v(min(max(mx, pr.left()), pr.right()), pr))
+        t0, t1 = self._t(self.lo), self._t(self.hi)
         f = 0.85 ** (d / 120.0)
-        self.set_view(anchor - (anchor - self.lo) * f, anchor + (self.hi - anchor) * f)
+        self.set_view(float(self.axis.inv(ta - (ta - t0) * f)), float(self.axis.inv(ta + (t1 - ta) * f)))
         self.viewChanged.emit(self.lo, self.hi)
         ev.accept()
 

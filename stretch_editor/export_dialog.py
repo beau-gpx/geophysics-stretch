@@ -83,8 +83,8 @@ class ExportDialog(QDialog):
         rl = QHBoxLayout(rw)
         rl.setContentsMargins(0, 0, 0, 0)
         self.resMode = QComboBox()
-        self.resMode.addItem('Scale', 'scale')
         self.resMode.addItem('Cell size', 'cell')
+        self.resMode.addItem('Scale', 'scale')
         self.scale = QSpinBox()
         self.scale.setRange(1, ex.MAX_SCALE)
         self.scale.setSuffix(' %')
@@ -168,7 +168,7 @@ class ExportDialog(QDialog):
         self.level.setValue(s['level'])
         self._fill_transp(s['format'], s['compression'], s['transparency'])
         self.bg.setColor(QColor(*s['bg']))
-        self._select(self.resMode, s['res_mode'])
+        self._select(self.resMode, 'cell')    # always open on cell size (native cell)
         self.scale.setValue(s['scale'])
         self.cell.setSingleStep(self.native_x / 10)
         self.cell.setValue(self.native_x)      # cell size always starts at this grid's native cell

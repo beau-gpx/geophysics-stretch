@@ -119,12 +119,60 @@ def rescale(nodes, lo, hi):
     return sanitize([[lo + (x - x0) * f, y] for x, y in nodes])
 
 
+class LinearAxis:
+    log = False
+
+    def fwd(self, v):
+        return np.asarray(v, dtype=float)
+
+    def inv(self, t):
+        return np.asarray(t, dtype=float)
+
+    def clamp(self, lo, hi):
+        return lo, hi
+
+
+class LogAxis:
+    """Log x-axis for display. All-positive data uses log10; data with zero or negative
+    values uses a symmetric log (linear near zero, log beyond +/- c)."""
+    log = True
+
+    def __init__(self, sample):
+        s = np.asarray(sample, dtype=float)
+        self.positive = bool(np.min(s) > 0)
+        if self.positive:
+            self.tiny = float(np.min(s)) * 1e-3
+        else:
+            a = np.abs(s[s != 0])
+            self.c = float(np.percentile(a, 25)) if a.size else 1.0
+            if not self.c > 0:
+                self.c = 1.0
+
+    def fwd(self, v):
+        v = np.asarray(v, dtype=float)
+        if self.positive:
+            return np.log10(np.maximum(v, self.tiny))
+        return np.sign(v) * np.log10(1.0 + np.abs(v) / self.c)
+
+    def inv(self, t):
+        t = np.asarray(t, dtype=float)
+        if self.positive:
+            return np.power(10.0, t)
+        return np.sign(t) * self.c * (np.power(10.0, np.abs(t)) - 1.0)
+
+    def clamp(self, lo, hi):
+        if self.positive:
+            lo = max(lo, self.tiny)
+            hi = max(hi, lo * 1.0001)
+        return lo, hi
+
+
 def histogram(sample, lo, hi, bins=256):
     return np.histogram(sample, bins=bins, range=(lo, hi))
 
 
-def fit_curve_view(nodes, pad=0.05):
-    """View range that shows all nodes with a small margin."""
+def fit_curve_view(nodes, pad=0.0):
+    """View range from the first to the last node (optionally with a margin)."""
     lo, hi = _safe_range(nodes[0][0], nodes[-1][0])
     m = (hi - lo) * pad
     return lo - m, hi + m

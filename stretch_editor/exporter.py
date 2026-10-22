@@ -42,7 +42,7 @@ RESAMPLING = {'nearest': 'Nearest neighbour', 'bilinear': 'Bilinear', 'cubic': '
 
 DEFAULTS = dict(format='COG', compression='WEBP', lossless=False, quality=90, level=6,
                 jp2_size=10, transparency='alpha', bg=[255, 255, 255],
-                res_mode='scale', scale=100, cell=0.0, resampling='bilinear',
+                res_mode='cell', scale=100, cell=0.0, resampling='bilinear',
                 overviews=True, add_to_map=True)
 
 MAX_SCALE = 1000
@@ -90,7 +90,7 @@ def normalise(s):
     s['jp2_size'] = min(100, max(1, int(s['jp2_size'])))
     s['scale'] = min(MAX_SCALE, max(1, int(s['scale'])))
     if s['res_mode'] not in ('scale', 'cell'):
-        s['res_mode'] = 'scale'
+        s['res_mode'] = 'cell'
     if s['resampling'] not in RESAMPLING:
         s['resampling'] = 'bilinear'
     s['cell'] = max(0.0, float(s.get('cell') or 0.0))

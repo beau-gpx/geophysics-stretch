@@ -259,8 +259,14 @@ class StretchDock(QDockWidget):
                                'Edited curve: resamples it, keeping its shape.')
         row.addWidget(self.points)
         row.addStretch()
-        self.chkLogHist = QCheckBox('Log histogram')
+        self.chkLogHist = QCheckBox('Log counts (Y)')
+        self.chkLogHist.setToolTip('Log-scale the histogram bar heights')
+        self.chkLogX = QCheckBox('Log values (X)')
+        self.chkLogX.setToolTip('Show data values on a log axis.\n'
+                                'Data with zero or negative values uses a symmetric log '
+                                '(linear near zero).')
         row.addWidget(self.chkLogHist)
+        row.addWidget(self.chkLogX)
         lay.addLayout(row)
 
         # clip limits
@@ -349,7 +355,8 @@ class StretchDock(QDockWidget):
         self.btnEq.clicked.connect(lambda: self.preset('histeq'))
         self.btnLog.clicked.connect(lambda: self.preset('log'))
         self.points.valueChanged.connect(self.on_points)
-        self.chkLogHist.toggled.connect(self.curve.set_log_hist)
+        self.chkLogHist.toggled.connect(self.on_log_hist)
+        self.chkLogX.toggled.connect(self.on_log_x)
         self.viewLo.valueChanged.connect(self.on_view_spin)
         self.viewHi.valueChanged.connect(self.on_view_spin)
         self.btnViewData.clicked.connect(self.view_data)
@@ -411,6 +418,11 @@ class StretchDock(QDockWidget):
         self.curve.set_sample(s)
 
         state = self.load_state()
+        disp = (state or {}).get('display', {})
+        self._set_quiet_check(self.chkLogHist, disp.get('log_counts', self.chkLogHist.isChecked()))
+        self._set_quiet_check(self.chkLogX, disp.get('log_x', self.chkLogX.isChecked()))
+        self.curve.set_log_hist(self.chkLogHist.isChecked())
+        self.curve.set_xlog(self.chkLogX.isChecked())
         if state and state.get('band') == band and len(state.get('nodes', [])) >= 2:
             ramp = ramp_from_props(state.get('ramp', {}))
             if ramp:
@@ -446,6 +458,20 @@ class StretchDock(QDockWidget):
         self.reset_history()
         self.update_lut()
         self.apply()
+
+    @staticmethod
+    def _set_quiet_check(box, on):
+        box.blockSignals(True)
+        box.setChecked(bool(on))
+        box.blockSignals(False)
+
+    def on_log_hist(self, on):
+        self.curve.set_log_hist(on)
+        self.save_state()
+
+    def on_log_x(self, on):
+        self.curve.set_xlog(on)
+        self.on_curve_view(self.curve.lo, self.curve.hi)
 
     @staticmethod
     def _set_quiet(widget, value):
@@ -690,6 +716,7 @@ class StretchDock(QDockWidget):
                           'lower': self.pctLo.value(), 'upper': self.pctHi.value(),
                           'lo': self.clipLo.value(), 'hi': self.clipHi.value()},
                  'view': [self.curve.lo, self.curve.hi],
+                 'display': {'log_counts': self.chkLogHist.isChecked(), 'log_x': self.chkLogX.isChecked()},
                  'ramp': ramp_to_props(ramp) if ramp else {}}
         try:
             self.layer.setCustomProperty(PROP, json.dumps(state))

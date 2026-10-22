@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3 — 2026-10-22
+- Colour ramp shown up the y-axis of the histogram.
+- **Log values (X)** option: log x-axis (symmetric log for data with zero/negative values).
+- *Log histogram* renamed **Log counts (Y)**.
+- **Curve** view button fits exactly to the first and last nodes (no margin).
+- Export resolution opens on **Cell size** (native cell) by default.
+
 ## v1.2 — 2026-10-22
 - Export resolution by exact cell size (finer or coarser) or scale up to 1000 %, with
   nearest / bilinear / cubic / average resampling.

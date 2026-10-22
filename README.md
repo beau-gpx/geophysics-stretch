@@ -8,8 +8,9 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
 3. Open it from the toolbar icon or **Raster → Stretch Editor**. It docks on the right.
 
 ## Editing the curve
-- The panel shows the data histogram, the transfer curve (data value → position along the
-  colour ramp) and a colour strip showing the result.
+- The panel shows the data histogram and the transfer curve (data value → position along the
+  colour ramp). The colour ramp runs up the y-axis, and a strip under the x-axis shows the
+  colour each data value gets.
 - Click to add a node, drag to move it, right-click (or select + Delete) to remove it.
   Drag a node onto its neighbour (it gets a red ring) and release to merge the two.
   Type exact values in *Selected node*.
@@ -20,12 +21,15 @@ ER Mapper-style colour stretch for single-band grids (mag, gravity, radiometrics
     remembers its own count).
   - On a hand-edited curve it resamples: adding points keeps the shape exactly; removing
     points drops the least important nodes first so bends survive.
-- **Log histogram** helps with spiky data.
+- **Log counts (Y)** log-scales the histogram bar heights, which helps with spiky data.
+- **Log values (X)** shows data values on a log axis. Data with zero or negative values (e.g.
+  magnetic anomalies) uses a symmetric log, linear near zero. This only changes the display;
+  the stretch itself is unchanged.
 
 ## View range
 - The histogram opens showing the full data range (min to max).
 - Set the x-axis range exactly with the **View** fields, zoom with the mouse wheel, or pan with
-  Shift+drag or middle-drag. **Data** resets to min–max; **Curve** fits the view to the nodes.
+  Shift+drag or middle-drag. **Data** resets to min–max; **Curve** sets the view to exactly the first and last nodes.
 - Nodes outside the view are shown as orange arrows at the edge.
 
 ## Clip limits
@@ -49,8 +53,8 @@ Choose in the export dialog (your last settings are remembered):
 - **Mode:** lossy or lossless where the compression supports both
 - **Quality** (JPEG/WEBP 1–100), **target size %** (JPEG2000) or **compression level** (ZSTD/DEFLATE/PNG)
 - **Transparency:** alpha channel (smooth edges), 1-bit internal mask, or none with a fill colour
-- **Resolution:** a scale (1–1000 % of native) or an exact **cell size** in map units, finer or
-  coarser than the grid, with nearest, bilinear, cubic or average resampling. The output size
+- **Resolution:** an exact **cell size** in map units (the default, starting at the grid's native
+  cell) or a scale (1–1000 % of native), finer or coarser than the grid, with nearest, bilinear, cubic or average resampling. The output size
   and cell size are shown.
 - **Overviews** for fast display, and **add to map** when done
 
