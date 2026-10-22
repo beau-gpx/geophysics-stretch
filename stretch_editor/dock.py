@@ -1,0 +1,680 @@
+"""Dock widget: layer/band selection, curve editing, presets, undo/redo, live apply and export."""
+import copy
+import json
+import os
+
+import numpy as np
+
+from qgis.PyQt.QtCore import Qt, QTimer
+from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtWidgets import (
+    QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+    QPushButton, QDoubleSpinBox, QSpinBox, QCheckBox, QComboBox, QFileDialog,
+    QMessageBox, QProgressDialog, QApplication, QGroupBox, QToolButton,
+)
+from qgis.core import (
+    Qgis, QgsRasterLayer, QgsRectangle, QgsColorRampShader,
+    QgsRasterShader, QgsSingleBandPseudoColorRenderer, QgsGradientColorRamp,
+    QgsGradientStop, QgsMapLayerProxyModel,
+)
+from qgis.gui import QgsMapLayerComboBox, QgsRasterBandComboBox, QgsColorRampButton
+
+from . import stretch
+from . import exporter
+from .curve_widget import CurveWidget, E
+from .export_dialog import ExportDialog
+
+PROP = 'stretchEditor/state'
+SAMPLE_MAX = 1200          # max sample dimension for histogram
+LUT_N = 1024               # colour lookup resolution
+SHADER_N = 512             # colour-ramp shader items applied to the layer
+HISTORY_MAX = 200
+DEFAULT_POINTS = {'linear': 2, 'histeq': 33, 'log': 25}
+PRESET_NAMES = {'linear': 'Linear', 'histeq': 'Hist. equalise', 'log': 'Log-linear'}
+
+
+# ---------------------------------------------------------------- helpers
+def _enum(*candidates):
+    for obj, path in candidates:
+        try:
+            cur = obj
+            for part in path.split('.'):
+                cur = getattr(cur, part)
+            return cur
+        except AttributeError:
+            continue
+    raise AttributeError(candidates)
+
+
+def _raster_filter():
+    return _enum((Qgis, 'LayerFilter.RasterLayer'), (QgsMapLayerProxyModel, 'Filter.RasterLayer'),
+                 (QgsMapLayerProxyModel, 'RasterLayer'))
+
+
+def _interpolated():
+    return _enum((Qgis, 'ShaderInterpolationMethod.Linear'), (QgsColorRampShader, 'Type.Interpolated'),
+                 (QgsColorRampShader, 'Interpolated'))
+
+
+_DTYPES = [('Byte', np.uint8), ('Int8', np.int8), ('UInt16', np.uint16), ('Int16', np.int16),
+           ('UInt32', np.uint32), ('Int32', np.int32), ('Float32', np.float32), ('Float64', np.float64)]
+
+
+def _np_dtype(dt):
+    for name, npdt in _DTYPES:
+        for obj, path in ((Qgis, 'DataType.' + name), (Qgis, name)):
+            try:
+                if dt == _enum((obj, path)):
+                    return npdt
+            except AttributeError:
+                pass
+    raise ValueError('Unsupported raster data type (complex or unknown).')
+
+
+def read_block(provider, band, extent, w, h):
+    """Read a raster block as float64 with nodata -> NaN."""
+    block = provider.block(band, extent, w, h)
+    arr = None
+    if hasattr(block, 'as_numpy'):
+        try:
+            a = block.as_numpy(use_masking=True)
+            if np.ma.isMaskedArray(a):
+                arr = a.astype(np.float64).filled(np.nan)
+            else:
+                arr = np.array(a, dtype=np.float64)
+        except Exception:
+            arr = None
+    if arr is None:
+        raw = bytes(block.data())
+        arr = np.frombuffer(raw, dtype=_np_dtype(block.dataType())).reshape(h, w).astype(np.float64)
+    if block.hasNoDataValue():
+        arr[arr == block.noDataValue()] = np.nan
+    if provider.sourceHasNoDataValue(band) and provider.useSourceNoDataValue(band):
+        arr[arr == provider.sourceNoDataValue(band)] = np.nan
+    with np.errstate(invalid='ignore'):
+        arr[np.abs(arr) > 1e30] = np.nan      # float dummy values (e.g. ±3.4e38)
+    return arr.reshape(h, w)
+
+
+def default_ramp():
+    """ER Mapper-like pseudocolour: blue -> cyan -> green -> yellow -> red -> magenta."""
+    stops = [QgsGradientStop(0.2, QColor(0, 200, 255)), QgsGradientStop(0.4, QColor(0, 220, 0)),
+             QgsGradientStop(0.6, QColor(255, 255, 0)), QgsGradientStop(0.8, QColor(255, 0, 0))]
+    return QgsGradientColorRamp(QColor(0, 0, 255), QColor(255, 0, 255), False, stops)
+
+
+def ramp_to_props(ramp):
+    try:
+        from qgis.core import QgsSymbolLayerUtils
+        return {'variant': QgsSymbolLayerUtils.colorRampToVariant('r', ramp)}
+    except Exception:
+        return {'type': ramp.type(), 'props': ramp.properties()}
+
+
+def ramp_from_props(d):
+    try:
+        if 'variant' in d:
+            from qgis.core import QgsSymbolLayerUtils
+            r = QgsSymbolLayerUtils.loadColorRamp(d['variant'])
+            if r:
+                return r
+        if d.get('type') == 'gradient':
+            return QgsGradientColorRamp.create(d['props'])
+    except Exception:
+        pass
+    return None
+
+
+def _dspin(decimals=6):
+    sb = QDoubleSpinBox()
+    sb.setRange(-1e15, 1e15)
+    sb.setDecimals(decimals)
+    sb.setKeyboardTracking(False)
+    return sb
+
+
+# ---------------------------------------------------------------- dock
+class StretchDock(QDockWidget):
+    def __init__(self, iface, parent=None):
+        super().__init__('Stretch Editor', parent)
+        self.iface = iface
+        self.setObjectName('StretchEditorDock')
+        self.layer = None
+        self.sample = None
+        self._loading = False
+        self.last_preset = 'linear'
+        self.edited = False
+        self.preset_points = dict(DEFAULT_POINTS)
+        self.history, self.hpos = [], -1
+
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(150)
+        self.timer.timeout.connect(self.apply)
+
+        w = QWidget()
+        lay = QVBoxLayout(w)
+
+        # layer / band
+        g = QGridLayout()
+        g.addWidget(QLabel('Layer'), 0, 0)
+        self.layerCombo = QgsMapLayerComboBox()
+        self.layerCombo.setFilters(_raster_filter())
+        g.addWidget(self.layerCombo, 0, 1)
+        g.addWidget(QLabel('Band'), 1, 0)
+        self.bandCombo = QgsRasterBandComboBox()
+        g.addWidget(self.bandCombo, 1, 1)
+        lay.addLayout(g)
+
+        # curve + undo/redo
+        self.curve = CurveWidget()
+        lay.addWidget(self.curve, 1)
+        row = QHBoxLayout()
+        hint = QLabel('Click to add · drag to move · right-click or Delete to remove')
+        hint.setStyleSheet('color: gray; font-size: 8pt;')
+        row.addWidget(hint, 1)
+        self.btnUndo = QToolButton()
+        self.btnUndo.setText('↶ Undo')
+        self.btnUndo.setToolTip('Undo curve change (Ctrl+Z with the curve focused)')
+        self.btnRedo = QToolButton()
+        self.btnRedo.setText('↷ Redo')
+        self.btnRedo.setToolTip('Redo curve change (Ctrl+Y / Ctrl+Shift+Z)')
+        row.addWidget(self.btnUndo)
+        row.addWidget(self.btnRedo)
+        lay.addLayout(row)
+
+        # presets + points
+        row = QHBoxLayout()
+        self.btnLin = QPushButton('Linear')
+        self.btnEq = QPushButton('Hist. equalise')
+        self.btnLog = QPushButton('Log-linear')
+        for b in (self.btnLin, self.btnEq, self.btnLog):
+            row.addWidget(b)
+        lay.addLayout(row)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel('Points'))
+        self.points = QSpinBox()
+        self.points.setRange(2, 256)
+        self.points.setKeyboardTracking(False)
+        self.points.setToolTip('Number of nodes on the curve.\n'
+                               'Unedited preset: rebuilds the preset with this many points.\n'
+                               'Edited curve: resamples it, keeping its shape.')
+        row.addWidget(self.points)
+        self.chkLogHist = QCheckBox('Log histogram')
+        self.chkFull = QCheckBox('Full range')
+        self.chkFull.setToolTip('Show the full data range instead of 0.1–99.9 %')
+        row.addStretch()
+        row.addWidget(self.chkLogHist)
+        row.addWidget(self.chkFull)
+        lay.addLayout(row)
+
+        # clip limits
+        box = QGroupBox('Clip limits')
+        cg = QGridLayout(box)
+        self.clipMode = QComboBox()
+        self.clipMode.addItem('Percent', 'pct')
+        self.clipMode.addItem('Values', 'val')
+        cg.addWidget(self.clipMode, 0, 0)
+        self.clip = QDoubleSpinBox()
+        self.clip.setRange(0.0, 20.0)
+        self.clip.setDecimals(2)
+        self.clip.setSingleStep(0.25)
+        self.clip.setValue(1.0)
+        self.clip.setSuffix(' % each end')
+        self.clip.setKeyboardTracking(False)
+        cg.addWidget(self.clip, 0, 1, 1, 3)
+        self.clipLo = _dspin()
+        self.clipHi = _dspin()
+        self.lblLo, self.lblHi = QLabel('Min'), QLabel('Max')
+        cg.addWidget(self.lblLo, 1, 0)
+        cg.addWidget(self.clipLo, 1, 1)
+        cg.addWidget(self.lblHi, 1, 2)
+        cg.addWidget(self.clipHi, 1, 3)
+        lay.addWidget(box)
+
+        # selected node
+        box = QGroupBox('Selected node')
+        bg = QHBoxLayout(box)
+        bg.addWidget(QLabel('Value'))
+        self.spinVal = _dspin()
+        bg.addWidget(self.spinVal, 1)
+        bg.addWidget(QLabel('Output %'))
+        self.spinOut = QDoubleSpinBox()
+        self.spinOut.setRange(0, 100)
+        self.spinOut.setDecimals(1)
+        self.spinOut.setKeyboardTracking(False)
+        bg.addWidget(self.spinOut)
+        box.setEnabled(False)
+        self.nodeBox = box
+        lay.addWidget(box)
+
+        # ramp + apply
+        row = QHBoxLayout()
+        row.addWidget(QLabel('Colour ramp'))
+        self.rampBtn = QgsColorRampButton()
+        self.rampBtn.setDefaultColorRamp(default_ramp())
+        self.rampBtn.setColorRamp(default_ramp())
+        row.addWidget(self.rampBtn, 1)
+        lay.addLayout(row)
+
+        row = QHBoxLayout()
+        self.chkLive = QCheckBox('Live update')
+        self.chkLive.setChecked(True)
+        self.btnApply = QPushButton('Apply')
+        row.addWidget(self.chkLive)
+        row.addStretch()
+        row.addWidget(self.btnApply)
+        lay.addLayout(row)
+
+        # export
+        row = QHBoxLayout()
+        self.btnExport = QPushButton('Export image…')
+        self.btnStyle = QPushButton('Save style (.qml)…')
+        row.addWidget(self.btnExport)
+        row.addWidget(self.btnStyle)
+        lay.addLayout(row)
+
+        self.setWidget(w)
+
+        # signals (Ctrl+Z / Ctrl+Y / Delete are handled by the curve while it has focus)
+        self.curve.undoRequested.connect(self.undo)
+        self.curve.redoRequested.connect(self.redo)
+        self.layerCombo.layerChanged.connect(self.on_layer)
+        self.bandCombo.bandChanged.connect(self.on_band)
+        self.btnLin.clicked.connect(lambda: self.preset('linear'))
+        self.btnEq.clicked.connect(lambda: self.preset('histeq'))
+        self.btnLog.clicked.connect(lambda: self.preset('log'))
+        self.points.valueChanged.connect(self.on_points)
+        self.chkLogHist.toggled.connect(self.curve.set_log_hist)
+        self.chkFull.toggled.connect(lambda _: self.update_histogram())
+        self.clipMode.currentIndexChanged.connect(self.on_clip_mode)
+        self.clip.valueChanged.connect(self.on_clip)
+        self.clipLo.valueChanged.connect(self.on_clip)
+        self.clipHi.valueChanged.connect(self.on_clip)
+        self.curve.curveChanged.connect(self.on_curve_changed)
+        self.curve.curveEdited.connect(self.on_user_edit)
+        self.curve.selectionChanged.connect(self.on_selection)
+        self.spinVal.valueChanged.connect(self.on_spin)
+        self.spinOut.valueChanged.connect(self.on_spin)
+        self.rampBtn.colorRampChanged.connect(self.on_ramp)
+        self.btnApply.clicked.connect(self.apply)
+        self.btnUndo.clicked.connect(self.undo)
+        self.btnRedo.clicked.connect(self.redo)
+        self.btnExport.clicked.connect(self.export_image)
+        self.btnStyle.clicked.connect(self.save_style)
+
+        self.on_clip_mode()
+        self.update_lut()
+        self.update_undo_buttons()
+        self.on_layer(self.layerCombo.currentLayer())
+
+    # ------------------------------------------------ loading
+    def on_layer(self, layer):
+        self.layer = layer if isinstance(layer, QgsRasterLayer) else None
+        self.bandCombo.setLayer(self.layer)
+        self.on_band(self.bandCombo.currentBand())
+
+    def on_band(self, band):
+        self.sample = None
+        if self.layer is None or band is None or band < 1:
+            self.curve.set_histogram(None, 0, 1)
+            self.curve.set_nodes([])
+            self.reset_history()
+            return
+        try:
+            prov = self.layer.dataProvider()
+            w, h = self.layer.width(), self.layer.height()
+            f = min(1.0, SAMPLE_MAX / max(w, h))
+            sw, sh = max(1, int(w * f)), max(1, int(h * f))
+            a = read_block(prov, band, self.layer.extent(), sw, sh)
+            s = a[np.isfinite(a)]
+            if s.size < 2:
+                raise ValueError('Band has no valid data.')
+            self.sample = s
+        except Exception as e:
+            QMessageBox.warning(self, 'Stretch Editor', f'Could not read band: {e}')
+            return
+
+        self._loading = True
+        step = (float(np.max(s)) - float(np.min(s))) / 200.0 or 1.0
+        for sb in (self.clipLo, self.clipHi, self.spinVal):
+            sb.setSingleStep(step)
+
+        state = self.load_state()
+        if state and state.get('band') == band and len(state.get('nodes', [])) >= 2:
+            ramp = ramp_from_props(state.get('ramp', {}))
+            if ramp:
+                self.rampBtn.setColorRamp(ramp)
+            self.last_preset = state.get('preset', 'linear')
+            self.edited = bool(state.get('edited', True))
+            self.preset_points.update(state.get('preset_points', {}))
+            clip = state.get('clip', {})
+            self._set_quiet(self.clip, clip.get('pct', self.clip.value()))
+            self._set_quiet(self.clipMode, clip.get('mode', 'pct'))
+            self.on_clip_mode(fill=False)
+            nodes = state['nodes']
+            self._set_quiet(self.clipLo, clip.get('lo', nodes[0][0]))
+            self._set_quiet(self.clipHi, clip.get('hi', nodes[-1][0]))
+            self.curve.set_nodes(nodes)
+        else:
+            self.last_preset, self.edited = 'linear', False
+            lo, hi = stretch.percent_clip(s, self.clip.value())
+            self._set_quiet(self.clipLo, lo)
+            self._set_quiet(self.clipHi, hi)
+            self.curve.set_nodes(self._run_preset('linear'))
+        self.update_histogram()
+        self.sync_points()
+        self._loading = False
+        self.reset_history()
+        self.update_lut()
+        self.apply()
+
+    @staticmethod
+    def _set_quiet(widget, value):
+        widget.blockSignals(True)
+        if isinstance(widget, QComboBox):
+            i = widget.findData(value)
+            if i >= 0:
+                widget.setCurrentIndex(i)
+        else:
+            widget.setValue(value)
+        widget.blockSignals(False)
+
+    def update_histogram(self):
+        if self.sample is None:
+            return
+        inc = (self.clipLo.value(), self.clipHi.value()) if self.clipMode.currentData() == 'val' else ()
+        dmin, dmax = float(np.min(self.sample)), float(np.max(self.sample))
+        inc = tuple(min(dmax, max(dmin, v)) for v in inc)
+        lo, hi = stretch.view_range(self.sample, self.chkFull.isChecked(), inc)
+        counts, _ = stretch.histogram(self.sample, lo, hi)
+        self.curve.set_histogram(counts, lo, hi)
+
+    # ------------------------------------------------ clip limits
+    def clip_range(self):
+        if self.clipMode.currentData() == 'val':
+            lo, hi = self.clipLo.value(), self.clipHi.value()
+            if hi < lo:
+                lo, hi = hi, lo
+            if hi == lo:
+                hi = lo + max(abs(lo) * 1e-6, 1e-9)
+            return lo, hi
+        return stretch.percent_clip(self.sample, self.clip.value())
+
+    def on_clip_mode(self, *_, fill=True):
+        manual = self.clipMode.currentData() == 'val'
+        self.clip.setVisible(not manual)
+        for wdg in (self.clipLo, self.clipHi, self.lblLo, self.lblHi):
+            wdg.setEnabled(manual)
+        if manual and fill and len(self.curve.nodes) >= 2 and not self._loading:
+            # start from what is currently applied
+            self._set_quiet(self.clipLo, self.curve.nodes[0][0])
+            self._set_quiet(self.clipHi, self.curve.nodes[-1][0])
+        if not self._loading:
+            self.update_histogram()
+            self.on_clip()          # apply the limits of the newly chosen mode
+            self.save_state()
+
+    def on_clip(self, *_):
+        if self.sample is None or self._loading or len(self.curve.nodes) < 2:
+            return
+        lo, hi = self.clip_range()
+        if self.clipMode.currentData() == 'pct':
+            self._set_quiet(self.clipLo, lo)
+            self._set_quiet(self.clipHi, hi)
+        if self.edited:
+            nodes = stretch.rescale(self.curve.nodes, lo, hi)   # keep the hand-edited shape
+        else:
+            nodes = self._run_preset(self.last_preset)
+        self.curve.set_nodes(nodes)
+        self.update_histogram()
+        self.commit()
+
+    # ------------------------------------------------ presets / points
+    def _run_preset(self, kind, n=None):
+        lo, hi = self.clip_range()
+        n = n or self.preset_points.get(kind, DEFAULT_POINTS[kind])
+        return stretch.PRESETS[kind](self.sample, lo, hi, n)
+
+    def preset(self, kind):
+        if self.sample is None:
+            return
+        self.last_preset, self.edited = kind, False
+        self.curve.set_nodes(self._run_preset(kind))
+        self.commit()
+
+    def sync_points(self):
+        self._set_quiet(self.points, len(self.curve.nodes) or 2)
+
+    def on_points(self, n):
+        if self.sample is None or len(self.curve.nodes) < 2 or n == len(self.curve.nodes):
+            return
+        if self.edited:
+            nodes = stretch.resample(self.curve.nodes, n)
+        else:
+            self.preset_points[self.last_preset] = n
+            nodes = self._run_preset(self.last_preset, n)
+        self.curve.set_nodes(nodes)
+        self.commit(sync=False)
+        if len(nodes) != n:      # e.g. hist-equalise merged duplicate quantiles
+            self.sync_points()
+
+    # ------------------------------------------------ editing
+    def on_curve_changed(self):
+        self.sync_points()
+        if self.chkLive.isChecked() and not self._loading:
+            self.timer.start()
+
+    def on_user_edit(self):
+        self.edited = True
+        self.commit()
+
+    def on_selection(self, i):
+        self.nodeBox.setEnabled(i >= 0)
+        if i >= 0:
+            x, y = self.curve.nodes[i]
+            self._set_quiet(self.spinVal, x)
+            self._set_quiet(self.spinOut, y * 100)
+
+    def on_spin(self, *_):
+        i = self.curve.sel
+        if i >= 0:
+            self.curve.set_node(i, self.spinVal.value(), self.spinOut.value() / 100.0)
+            self.on_selection(i)
+
+    def on_ramp(self):
+        self.update_lut()
+        self.save_state()
+        self.apply()
+
+    def update_lut(self):
+        ramp = self.rampBtn.colorRamp() or default_ramp()
+        cols = [ramp.color(i / (LUT_N - 1)) for i in range(LUT_N)]
+        self.lut_q = cols
+        self.lut_rgba = np.array([[c.red(), c.green(), c.blue(), c.alpha()] for c in cols], dtype=np.uint8)
+        self.curve.set_lut(cols[::4])
+
+    # ------------------------------------------------ undo / redo
+    def _snapshot(self):
+        return {'nodes': copy.deepcopy(self.curve.nodes), 'preset': self.last_preset, 'edited': self.edited}
+
+    def reset_history(self):
+        self.history = [self._snapshot()] if len(self.curve.nodes) >= 2 else []
+        self.hpos = len(self.history) - 1
+        self.update_undo_buttons()
+
+    def commit(self, sync=True):
+        """Record the current curve, then save and apply it."""
+        if sync:
+            self.sync_points()
+        if len(self.curve.nodes) >= 2:
+            snap = self._snapshot()
+            if not (0 <= self.hpos < len(self.history)) or self.history[self.hpos]['nodes'] != snap['nodes']:
+                del self.history[self.hpos + 1:]
+                self.history.append(snap)
+                if len(self.history) > HISTORY_MAX:
+                    self.history.pop(0)
+                self.hpos = len(self.history) - 1
+            else:
+                self.history[self.hpos] = snap
+        self.update_undo_buttons()
+        self.save_state()
+        self.apply()
+
+    def _restore(self, snap):
+        self.last_preset, self.edited = snap['preset'], snap['edited']
+        self.curve.set_nodes(copy.deepcopy(snap['nodes']))
+        self.sync_points()
+        self.update_undo_buttons()
+        self.save_state()
+        self.apply()
+
+    def undo(self):
+        if self.hpos > 0:
+            self.hpos -= 1
+            self._restore(self.history[self.hpos])
+
+    def redo(self):
+        if self.hpos < len(self.history) - 1:
+            self.hpos += 1
+            self._restore(self.history[self.hpos])
+
+    def update_undo_buttons(self):
+        self.btnUndo.setEnabled(self.hpos > 0)
+        self.btnRedo.setEnabled(0 <= self.hpos < len(self.history) - 1)
+
+    # ------------------------------------------------ apply to layer
+    def apply(self):
+        if self.layer is None or len(self.curve.nodes) < 2:
+            return
+        band = self.bandCombo.currentBand()
+        nodes = self.curve.nodes
+        x0, x1 = nodes[0][0], nodes[-1][0]
+        vals = np.unique(np.concatenate([np.linspace(x0, x1, SHADER_N), [n[0] for n in nodes]]))
+        ts = stretch.evaluate(nodes, vals)
+        items = [QgsColorRampShader.ColorRampItem(float(v), self.lut_q[int(round(t * (LUT_N - 1)))], '')
+                 for v, t in zip(vals, ts)]
+        sh = QgsColorRampShader()
+        sh.setColorRampType(_interpolated())
+        sh.setColorRampItemList(items)
+        sh.setMinimumValue(x0)
+        sh.setMaximumValue(x1)
+        sh.setClip(False)
+        try:
+            ramp = self.rampBtn.colorRamp()
+            if ramp:
+                sh.setSourceColorRamp(ramp)
+        except Exception:
+            pass
+        try:
+            from qgis.core import QgsColorRampLegendNodeSettings
+            ls = QgsColorRampLegendNodeSettings()
+            ls.setUseContinuousLegend(True)
+            sh.setLegendSettings(ls)
+        except Exception:
+            pass
+        rs = QgsRasterShader()
+        rs.setRasterShaderFunction(sh)
+        r = QgsSingleBandPseudoColorRenderer(self.layer.dataProvider(), band, rs)
+        r.setClassificationMin(x0)
+        r.setClassificationMax(x1)
+        self.layer.setRenderer(r)
+        self.layer.triggerRepaint()
+        try:
+            self.layer.emitStyleChanged()
+        except Exception:
+            pass
+
+    # ------------------------------------------------ state
+    def save_state(self):
+        if self.layer is None or self._loading or len(self.curve.nodes) < 2:
+            return
+        ramp = self.rampBtn.colorRamp()
+        state = {'band': self.bandCombo.currentBand(), 'nodes': self.curve.nodes,
+                 'preset': self.last_preset, 'edited': self.edited,
+                 'preset_points': self.preset_points,
+                 'clip': {'mode': self.clipMode.currentData(), 'pct': self.clip.value(),
+                          'lo': self.clipLo.value(), 'hi': self.clipHi.value()},
+                 'ramp': ramp_to_props(ramp) if ramp else {}}
+        try:
+            self.layer.setCustomProperty(PROP, json.dumps(state))
+        except TypeError:
+            state['ramp'] = {}
+            self.layer.setCustomProperty(PROP, json.dumps(state))
+
+    def load_state(self):
+        try:
+            return json.loads(self.layer.customProperty(PROP, '') or 'null')
+        except Exception:
+            return None
+
+    def save_style(self):
+        if self.layer is None:
+            return
+        self.apply()
+        self.save_state()
+        path, _ = QFileDialog.getSaveFileName(self, 'Save style', self._default_name('.qml'), 'QGIS style (*.qml)')
+        if path:
+            msg, ok = self.layer.saveNamedStyle(path)
+            if not ok:
+                QMessageBox.warning(self, 'Stretch Editor', msg)
+
+    def _default_name(self, ext):
+        src = self.layer.source().split('|')[0]
+        base = os.path.splitext(src)[0] if os.path.exists(src) else os.path.join(os.path.expanduser('~'), self.layer.name())
+        return base + '_stretch' + ext
+
+    # ------------------------------------------------ export
+    def export_image(self):
+        if self.layer is None or len(self.curve.nodes) < 2:
+            return
+        lyr, prov, band = self.layer, self.layer.dataProvider(), self.bandCombo.currentBand()
+        dlg = ExportDialog(lyr.width(), lyr.height(), self)
+        if not dlg.exec():
+            return
+        s = dlg.settings()
+        fmt = exporter.FORMATS[s['format']]
+        out, _ = QFileDialog.getSaveFileName(self, 'Export image', self._default_name(fmt['ext']),
+                                             f"{fmt['label']} (*{fmt['ext']})")
+        if not out:
+            return
+        if not out.lower().endswith(fmt['ext']):
+            out += fmt['ext']
+
+        f = s['scale'] / 100.0
+        ow, oh = max(1, round(lyr.width() * f)), max(1, round(lyr.height() * f))
+        ext = lyr.extent()
+        px, py = ext.width() / ow, ext.height() / oh
+        gt = (ext.xMinimum(), px, 0, ext.yMaximum(), 0, -py)
+
+        def read_strip(r0, n):
+            sub = QgsRectangle(ext.xMinimum(), ext.yMaximum() - (r0 + n) * py,
+                               ext.xMaximum(), ext.yMaximum() - r0 * py)
+            return read_block(prov, band, sub, ow, n)
+
+        prog = QProgressDialog('Rendering…', 'Cancel', 0, 1000, self)
+        prog.setWindowModality(E(Qt, 'WindowModality.WindowModal'))
+        prog.setMinimumDuration(300)
+
+        def progress(frac, msg):
+            prog.setLabelText(msg)
+            prog.setValue(int(frac * 1000))
+            QApplication.processEvents()
+            return not prog.wasCanceled()
+
+        try:
+            ok = exporter.run_export(read_strip, ow, oh, gt, lyr.crs().toWkt(),
+                                     [list(n) for n in self.curve.nodes], self.lut_rgba, s, out, progress)
+        except Exception as e:
+            prog.close()
+            QMessageBox.warning(self, 'Stretch Editor',
+                                f'Export failed:\n{e}\n\nTry a different format or compression.')
+            return
+        prog.close()
+        if not ok:
+            return
+        size = os.path.getsize(out) / 1e6
+        self.iface.messageBar().pushSuccess('Stretch Editor', f'Exported {os.path.basename(out)} ({size:,.1f} MB)')
+        if s['add_to_map']:
+            self.iface.addRasterLayer(out, os.path.splitext(os.path.basename(out))[0])

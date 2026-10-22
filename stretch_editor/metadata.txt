@@ -1,0 +1,15 @@
+[general]
+name=Stretch Editor
+qgisMinimumVersion=3.22
+qgisMaximumVersion=4.99
+supportsQt6=True
+description=ER Mapper-style interactive colour stretch for single-band grids
+about=Shows the data histogram with an editable transfer curve. Add, drag and delete nodes; undo/redo; one-click Linear, Histogram-equalised and Log-linear presets with percent or manual-value clip limits and an adjustable number of curve points; live update of the layer style; export to Cloud-Optimised GeoTIFF, GeoTIFF, JPEG2000, PNG or JPEG with choice of compression, lossy/lossless, quality, transparency and resolution.
+version=1.1.0
+author=Beau Garland
+email=noreply@localhost
+tags=raster, stretch, histogram, geophysics, colour ramp, magnetics, gravity
+category=Raster
+icon=icon.png
+experimental=False
+deprecated=False

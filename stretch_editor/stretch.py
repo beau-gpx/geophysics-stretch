@@ -1,0 +1,146 @@
+"""Pure-numpy stretch maths (no QGIS dependency, so it can be unit tested).
+
+A stretch is a list of nodes [[data_value, output], ...] with data values
+strictly increasing and output in 0..1. Values outside the first/last node
+are held flat (like ER Mapper's transform limits).
+"""
+import numpy as np
+
+
+def _safe_range(lo, hi):
+    lo, hi = float(lo), float(hi)
+    if hi < lo:
+        lo, hi = hi, lo
+    if not hi > lo:
+        hi = lo + max(abs(lo) * 1e-6, 1e-9)
+    return lo, hi
+
+
+def percent_clip(sample, clip_pct):
+    lo, hi = np.percentile(sample, [clip_pct, 100.0 - clip_pct])
+    if not hi > lo:
+        lo, hi = np.min(sample), np.max(sample)
+    return _safe_range(lo, hi)
+
+
+def sanitize(nodes):
+    """Sort, clamp outputs to 0..1 and force strictly increasing values."""
+    nodes = sorted([[float(x), min(1.0, max(0.0, float(y)))] for x, y in nodes])
+    out = []
+    for x, y in nodes:
+        if out and x <= out[-1][0]:
+            x = out[-1][0] + max(abs(out[-1][0]) * 1e-9, 1e-12)
+        out.append([x, y])
+    return out
+
+
+# ------------------------------------------------------------- presets
+def preset_linear(sample, lo, hi, n=2):
+    lo, hi = _safe_range(lo, hi)
+    n = max(2, int(n))
+    return sanitize(np.column_stack([np.linspace(lo, hi, n), np.linspace(0, 1, n)]).tolist())
+
+
+def preset_histeq(sample, lo, hi, n=33):
+    """Equal-area stretch: nodes placed at quantiles of the data inside lo..hi."""
+    lo, hi = _safe_range(lo, hi)
+    n = max(2, int(n))
+    s = sample[(sample >= lo) & (sample <= hi)]
+    if s.size < 2:
+        return preset_linear(sample, lo, hi, n)
+    q = np.linspace(0.0, 1.0, n)
+    xs = np.quantile(s, q)
+    xs[0], xs[-1] = lo, hi
+    keep = np.concatenate([[True], np.diff(xs) > 0])
+    xs, ys = xs[keep], q[keep]
+    if xs.size < 2:
+        return preset_linear(sample, lo, hi, n)
+    ys = (ys - ys[0]) / (ys[-1] - ys[0])
+    return sanitize(np.column_stack([xs, ys]).tolist())
+
+
+def preset_log(sample, lo, hi, n=25, k=100.0):
+    """Log-linear stretch: expands the low end of lo..hi."""
+    lo, hi = _safe_range(lo, hi)
+    n = max(2, int(n))
+    xs = np.linspace(lo, hi, n)
+    ys = np.log1p(k * (xs - lo) / (hi - lo)) / np.log1p(k)
+    return sanitize(np.column_stack([xs, ys]).tolist())
+
+
+PRESETS = {'linear': preset_linear, 'histeq': preset_histeq, 'log': preset_log}
+
+
+# ------------------------------------------------------------- curve ops
+def evaluate(nodes, values):
+    xs = np.array([n[0] for n in nodes], dtype=float)
+    ys = np.array([n[1] for n in nodes], dtype=float)
+    return np.clip(np.interp(values, xs, ys), 0.0, 1.0)
+
+
+def resample(nodes, n):
+    """Change an edited curve to n nodes while keeping its shape.
+    More nodes: split the longest segments (shape is unchanged).
+    Fewer nodes: drop the least significant node each time (Visvalingam), so bends survive."""
+    n = max(2, int(n))
+    pts = [list(p) for p in sanitize(nodes)]
+    x0, x1 = pts[0][0], pts[-1][0]
+
+    def norm(p):
+        return ((p[0] - x0) / (x1 - x0), p[1])
+
+    while len(pts) < n:
+        lens = [np.hypot(*np.subtract(norm(pts[i + 1]), norm(pts[i]))) for i in range(len(pts) - 1)]
+        i = int(np.argmax(lens))
+        pts.insert(i + 1, [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2])
+
+    while len(pts) > n:
+        best, area = 1, None
+        for i in range(1, len(pts) - 1):
+            (ax, ay), (bx, by), (cx, cy) = norm(pts[i - 1]), norm(pts[i]), norm(pts[i + 1])
+            a = abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay))
+            if area is None or a < area:
+                best, area = i, a
+        del pts[best]
+    return sanitize(pts)
+
+
+def rescale(nodes, lo, hi):
+    """Linearly move node values so the curve spans lo..hi (keeps its shape)."""
+    lo, hi = _safe_range(lo, hi)
+    x0, x1 = nodes[0][0], nodes[-1][0]
+    f = (hi - lo) / (x1 - x0)
+    return sanitize([[lo + (x - x0) * f, y] for x, y in nodes])
+
+
+def histogram(sample, lo, hi, bins=256):
+    return np.histogram(sample, bins=bins, range=(lo, hi))
+
+
+def view_range(sample, full=False, include=()):
+    if full:
+        lo, hi = float(np.min(sample)), float(np.max(sample))
+    else:
+        lo, hi = np.percentile(sample, [0.1, 99.9])
+    for v in include:
+        lo, hi = min(lo, v), max(hi, v)
+    return _safe_range(lo, hi)
+
+
+# ------------------------------------------------------------- rendering
+def apply_lut(values, nodes, lut_rgba):
+    """Map data values to RGBA using the stretch and an (N,4) uint8 LUT.
+    NaN pixels become fully transparent."""
+    valid = np.isfinite(values)
+    t = evaluate(nodes, np.where(valid, values, nodes[0][0]))
+    idx = np.rint(t * (len(lut_rgba) - 1)).astype(np.int64)
+    rgba = lut_rgba[idx]
+    rgba[~valid] = 0
+    return rgba
+
+
+def flatten(rgba, bg_rgb):
+    """Composite RGBA over a background colour -> RGB uint8."""
+    a = rgba[..., 3:4].astype(np.float32) / 255.0
+    rgb = rgba[..., :3].astype(np.float32) * a + np.asarray(bg_rgb, np.float32) * (1.0 - a)
+    return np.rint(rgb).astype(np.uint8)
