@@ -10,34 +10,12 @@ Middle-drag or Shift+drag     -> pan the x-axis
 Ctrl+Z / Ctrl+Y               -> undo / redo (while the curve has focus)
 """
 import numpy as np
+from qgis.PyQt.QtCore import QEvent, QPointF, QRectF, QSize, Qt, pyqtSignal
+from qgis.PyQt.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
+from qgis.PyQt.QtWidgets import QSizePolicy, QWidget
 
-try:
-    from qgis.PyQt.QtCore import Qt, pyqtSignal, QPointF, QRectF, QEvent, QSize
-    from qgis.PyQt.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont, QPolygonF
-    from qgis.PyQt.QtWidgets import QWidget, QSizePolicy
-except ImportError:  # allows testing outside QGIS
-    from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QRectF, QEvent, QSize
-    from PyQt5.QtGui import QPainter, QColor, QPen, QBrush, QPainterPath, QFont, QPolygonF
-    from PyQt5.QtWidgets import QWidget, QSizePolicy
-
-from . import stretch
-
-
-def E(obj, path):
-    """Qt5/Qt6 enum compatibility: E(Qt, 'MouseButton.LeftButton')."""
-    scope, name = path.split('.')
-    try:
-        return getattr(getattr(obj, scope), name)
-    except AttributeError:
-        return getattr(obj, name)
-
-
-def _pos(event):
-    if hasattr(event, 'position'):
-        p = event.position()
-        return p.x(), p.y()
-    p = event.pos()
-    return float(p.x()), float(p.y())
+from ..compat import E, event_pos
+from ..core import stretch
 
 
 def fmt(v):
@@ -395,7 +373,7 @@ class CurveWidget(QWidget):
         return bool(ev.modifiers() & E(Qt, 'KeyboardModifier.ShiftModifier'))
 
     def mousePressEvent(self, ev):
-        mx, my = _pos(ev)
+        mx, my = event_pos(ev)
         btn = ev.button()
         if btn == E(Qt, 'MouseButton.MiddleButton') or (btn == E(Qt, 'MouseButton.LeftButton') and self._shift(ev)):
             self.pan = (mx, self._t(self.lo), self._t(self.hi))
@@ -426,7 +404,7 @@ class CurveWidget(QWidget):
             self.update()
 
     def mouseMoveEvent(self, ev):
-        mx, my = _pos(ev)
+        mx, my = event_pos(ev)
         pr = self._plot()
         if self.pan:
             x0, t0, t1 = self.pan
@@ -481,7 +459,7 @@ class CurveWidget(QWidget):
             ev.accept()
             return
         pr = self._plot()
-        mx, _ = _pos(ev)
+        mx, _ = event_pos(ev)
         ta = self._t(self._px2v(min(max(mx, pr.left()), pr.right()), pr))
         t0, t1 = self._t(self.lo), self._t(self.hi)
         f = 0.85 ** (d / 120.0)

@@ -1,9 +1,14 @@
 # Changelog
 
-## Unreleased
-- Repository moved to its public home: https://github.com/beau-gpx/geophysics-stretch
-- Licensed under GPL v2 or later (LICENSE file, SPDX headers in source files).
-- Contact email added to plugin metadata.
+## v2.0 — 2026-10-22
+First public release.
+- Published at https://github.com/beau-gpx/geophysics-stretch under the GPL v2 or later.
+- Code reorganised into `core/` (pure maths), `ui/` (panel and dialogs) and small QGIS helper
+  modules, with one shared QGIS 3 / QGIS 4 compatibility layer.
+- Unit tests for the stretch maths, colour bar labels and export options; lint configuration.
+- `scripts/build_zip.py` builds the installable ZIP; releases are published on GitHub.
+- README rewritten as a user guide; plugin metadata links to the homepage and issue tracker.
+- Behaviour is unchanged from v1.6.2. Stretches saved with layers in earlier versions still load.
 
 ## v1.6.2 — 2026-10-22
 - Histogram/curve editor plot area is 3:4 (height : width) instead of square.

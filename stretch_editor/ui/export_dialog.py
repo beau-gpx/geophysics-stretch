@@ -3,16 +3,26 @@
 """Export settings dialog."""
 import json
 
-from qgis.PyQt.QtGui import QColor
-from qgis.PyQt.QtWidgets import (
-    QDialog, QFormLayout, QVBoxLayout, QHBoxLayout, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QLabel, QDialogButtonBox, QWidget, QPushButton,
-)
 from qgis.core import QgsSettings
 from qgis.gui import QgsColorButton
+from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
-from . import exporter as ex
-from .curve_widget import E
+from ..compat import E
+from ..core import export as ex
 
 SETTINGS_KEY = 'stretchEditor/exportSettings'
 
@@ -101,7 +111,8 @@ class ExportDialog(QDialog):
         rl.addWidget(self.scale, 1)
         rl.addWidget(self.cell, 1)
         form.addRow('Resolution', rw)
-        native = f'{self.native_x:.6g}' + (f' × {self.native_y:.6g}' if abs(self.native_x - self.native_y) > 1e-9 * self.native_x else '')
+        square = abs(self.native_x - self.native_y) <= 1e-9 * self.native_x
+        native = f'{self.native_x:.6g}' + ('' if square else f' × {self.native_y:.6g}')
         self.nativeLbl = QLabel(f'Native cell {native} {units}'.strip())
         self.nativeLbl.setStyleSheet('color: gray;')
         form.addRow('', self.nativeLbl)

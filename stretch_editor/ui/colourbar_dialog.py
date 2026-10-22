@@ -3,16 +3,25 @@
 """Colour bar settings dialog with a live preview."""
 import json
 
+from qgis.core import QgsSettings
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QPixmap
 from qgis.PyQt.QtWidgets import (
-    QDialog, QFormLayout, QHBoxLayout, QVBoxLayout, QComboBox, QSpinBox, QLineEdit,
-    QLabel, QDialogButtonBox, QScrollArea,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QScrollArea,
+    QSpinBox,
+    QVBoxLayout,
 )
-from qgis.core import QgsSettings
 
-from . import colourbar as cb
-from .curve_widget import E
+from .. import legend
+from ..compat import E
+from ..core import colourbar as cb
 
 SETTINGS_KEY = 'stretchEditor/colourBar'
 
@@ -160,7 +169,7 @@ class ColourBarDialog(QDialog):
         self.note.setText('This curve goes up and down, so labels use round numbers.'
                           if s['tick_mode'] == 'colour' and info['mode'] == 'value' else '')
         try:
-            img = cb.render_image(s, self.bar_title(), self.nodes, self.colours, scale=1)
+            img = legend.render_image(s, self.bar_title(), self.nodes, self.colours, scale=1)
             self.preview.setPixmap(QPixmap.fromImage(img))
         except Exception as e:
             self.preview.setText(f'Preview failed: {e}')
