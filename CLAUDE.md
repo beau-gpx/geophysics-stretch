@@ -66,6 +66,14 @@ Features Beau wants eventually. Not started; test the current release in a real 
    hist. equalise, rendered by the plugin (extend `core/export.run_export` to three channels).
    Nodata in any channel becomes transparent. Triangle ternary legend export. Maybe ratio channels
    (Th/K) and hillshade blending.
+3. **Space-saving single-band image export**, like ER Mapper's black-and-white option. An export
+   choice of colour (RGB, current) or greyscale: write the stretch position as one 8-bit band
+   (0–255, nodata via alpha/mask) instead of three, roughly a third of the data before compression;
+   works with JPEG/WEBP/ZSTD/DEFLATE, JPEG2000 and PNG. Consider a third choice, paletted colour:
+   one 8-bit band of indexes plus a colour table (ramp sampled to 255 colours, one reserved for
+   nodata), so the image keeps its colours at greyscale size and is lossless; lossy compressions
+   (JPEG/WEBP) can't be used with it, so offer ZSTD/DEFLATE/LZW only. Needs `run_export` to write 1
+   band (greyscale or indexes) and the colour bar to match (grey ramp for greyscale).
 
 ## Not in the repo
 A real NSW survey subset (AIR0827 West Wyalong TMI + 1VD) was offered as sample data but is on hold
