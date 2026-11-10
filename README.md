@@ -153,11 +153,13 @@ stretch_editor/          the plugin (this folder is what goes in the ZIP)
 tests/                   unit tests for core/ and the sample data (no QGIS needed)
 scripts/build_zip.py     builds the installable ZIP into dist/ and checks it against QGIS repository rules
 scripts/make_sample_data.py  regenerates the sample grids (needs numpy and tifffile)
+scripts/check_imports.py     imports every module against stub QGIS (no QGIS needed)
 ```
 
 ```
 python -m unittest discover -s tests     # run the tests
 ruff check .                             # lint
+python scripts/check_imports.py          # offline import check
 python scripts/build_zip.py              # build dist/stretch_editor-<version>.zip
 ```
 
