@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 Beau Garland
-"""The Stretch Editor panel: layer/band choice, curve editing, clip limits, mirror mode,
+"""The SDP Imaging panel: layer/band choice, curve editing, clip limits, mirror mode,
 undo/redo, live styling, and image / colour bar / style export."""
 import copy
 import os
@@ -39,7 +39,7 @@ from .colourbar_dialog import stored_settings as colourbar_settings
 from .curve_widget import CurveWidget
 from .export_dialog import ExportDialog
 
-TITLE = 'Stretch Editor'
+TITLE = 'SDP Imaging'
 SAMPLE_MAX = 1200               # histogram sample: max pixels on the long side
 HISTORY_MAX = 200               # undo steps kept
 DEFAULT_POINTS = {'linear': 32, 'histeq': 32, 'log': 32}

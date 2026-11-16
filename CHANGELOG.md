@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v2.1.0 — 2026-11-16
+- Renamed **SDP Imaging** (SDP = Spatial Data Portal), with a new icon. Menus, toolbar and panel use
+  the new name: **Raster → SDP Imaging**. It's an in-place upgrade: installing the new ZIP replaces
+  Stretch Editor, and stretches saved in layers and projects, export settings and the panel position
+  all carry over.
 - Image export: the nodata collar is filled with the **Background colour** (default white) under an
   alpha channel or 1-bit mask too, not black. QGIS still shows it transparent; viewers that ignore
   the mask (Windows Explorer, Photos, Teams previews) now show a white collar instead of black. The

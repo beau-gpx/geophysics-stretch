@@ -1,8 +1,8 @@
-Stretch Editor sample data
-==========================
+SDP Imaging sample data
+=======================
 
 Three small synthetic grids for trying out and testing the plugin. Load them from
-Raster > Stretch Editor > Load sample data, or add them to QGIS like any GeoTIFF.
+Raster > SDP Imaging > Load sample data, or add them to QGIS like any GeoTIFF.
 
   tmi_nT.tif          Total magnetic intensity, nT. Smooth anomalies from buried bodies,
                       dykes and a faulted magnetic unit, on a regional gradient.

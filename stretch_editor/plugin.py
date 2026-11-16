@@ -13,9 +13,9 @@ except ImportError:
 
 from .compat import E, first_attr
 
-NAME = 'Stretch Editor'
+NAME = 'SDP Imaging'
 HERE = os.path.dirname(__file__)
-SAMPLE_GROUP = 'Stretch Editor sample data'
+SAMPLE_GROUP = 'SDP Imaging sample data'
 SAMPLES = [('tmi_nT.tif', 'Sample TMI (nT)'),
            ('tmi_1vd.tif', 'Sample TMI 1VD (nT/m)'),
            ('potassium_pct.tif', 'Sample potassium (%)')]

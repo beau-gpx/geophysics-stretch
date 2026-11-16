@@ -1,4 +1,6 @@
-# Stretch Editor for QGIS
+# SDP Imaging for QGIS
+
+*SDP = Spatial Data Portal. Formerly called Stretch Editor.*
 
 Interactive, ER Mapper-style colour stretching for single-band grids: magnetics, gravity,
 radiometrics, DEMs and anything else you image with a colour ramp.
@@ -26,7 +28,7 @@ a georeferenced image with a transparent collar and a matching colour bar.
    [latest release](https://github.com/beau-gpx/geophysics-stretch/releases/latest). Don't unzip it.
 2. In QGIS, open **Plugins → Manage and Install Plugins → Install from ZIP**, choose the file and
    click **Install Plugin**. Installing a newer ZIP replaces the old version.
-3. Open the editor from its toolbar button or **Raster → Stretch Editor**. It docks on the right.
+3. Open the editor from its toolbar button or **Raster → SDP Imaging**. It docks on the right.
 
 Requires QGIS 3.22 or later, including QGIS 4, on Windows, macOS or Linux. There are no extra
 dependencies: it uses NumPy and GDAL, which come with QGIS.
@@ -34,7 +36,7 @@ dependencies: it uses NumPy and GDAL, which come with QGIS.
 ## Quick start
 
 1. Select a single-band raster in the Layers panel. The editor opens on it. No grid to hand? Use
-   **Raster → Stretch Editor → Load sample data** (see below).
+   **Raster → SDP Imaging → Load sample data** (see below).
 2. Click **Hist. equalise** (or Linear / Log-linear).
 3. Adjust the **Clip limits**, or drag nodes on the curve. The map updates as you go.
 4. Use **Export image…**, **Colour bar…** or **Save style…** when you're happy with it.
@@ -119,7 +121,7 @@ number of labels, decimals, text size and background. Labels can be *evenly spac
 (best for histogram-equalised stretches) or *round numbers* (best for linear ones).
 
 ## Sample data
-**Raster → Stretch Editor → Load sample data** adds three small synthetic grids in a group, zooms to
+**Raster → SDP Imaging → Load sample data** adds three small synthetic grids in a group, zooms to
 them and opens the editor:
 
 | Grid | What it is | Good for trying |

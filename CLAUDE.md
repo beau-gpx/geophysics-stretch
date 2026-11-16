@@ -1,6 +1,6 @@
-# Stretch Editor — notes for Claude Code
+# SDP Imaging (formerly Stretch Editor) — notes for Claude Code
 
-QGIS plugin giving ER Mapper-style interactive colour stretching for single-band geophysics grids
+SDP = Spatial Data Portal, Beau's geophysics database. QGIS plugin giving ER Mapper-style interactive colour stretching for single-band geophysics grids
 (magnetics, 1VD, gravity, radiometrics). Owner: Beau Garland. Public repo, GPL-2.0-or-later.
 The README is the user guide; CHANGELOG.md records every version and the reasons for changes.
 
@@ -14,6 +14,9 @@ The README is the user guide; CHANGELOG.md records every version and the reasons
     pseudocolour style; `state.py` per-layer saved settings (JSON custom property, with upgrades
     for older formats); `legend.py` colour bar drawing; `compat.py` QGIS 3 (Qt5) / QGIS 4 (Qt6) helpers.
   - `sample_data/` synthetic CC0 GeoTIFFs (regenerate with `scripts/make_sample_data.py`).
+- `assets/icon.svg` source of `stretch_editor/icon.png` (128 px render). The package folder,
+  saved-state keys (`stretchEditor/...`) and dock object name keep the old name on purpose so
+  existing installs, projects and settings carry over; only the display name changed.
 - `tests/` unittest suite (no QGIS needed). `scripts/` build, sample data, offline import check.
 
 ## Commands
@@ -24,7 +27,7 @@ python scripts/check_imports.py          # imports every module against stub qgi
 python scripts/build_zip.py              # dist/stretch_editor-<version>.zip, checked against QGIS repo rules
 ```
 Run all four before committing. None of them exercise real Qt/QGIS behaviour: when a change touches
-the UI, styling or export, test it in QGIS (Plugins > Install from ZIP, then Raster > Stretch Editor >
+the UI, styling or export, test it in QGIS (Plugins > Install from ZIP, then Raster > SDP Imaging >
 Load sample data) or say clearly that it hasn't been run in QGIS.
 
 ## Conventions
