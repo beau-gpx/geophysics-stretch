@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- Image export: the nodata collar is filled with the **Background colour** (default white) under an
+  alpha channel or 1-bit mask too, not black. QGIS still shows it transparent; viewers that ignore
+  the mask (Windows Explorer, Photos, Teams previews) now show a white collar instead of black. The
+  Background colour button is now available with a 1-bit mask as well as with no transparency.
+
 ## v2.0.1 — 2026-10-22
 - Synthetic sample dataset (TMI, 1VD and potassium GeoTIFFs with a nodata collar) for trying
   and testing the plugin, plus **Raster → Stretch Editor → Load sample data**.

@@ -243,6 +243,15 @@ def apply_lut(values, nodes, lut_rgba):
     return rgba
 
 
+def fill_transparent(rgba, bg_rgb):
+    """Set the colour of fully transparent pixels (nodata) to a background colour, keeping alpha.
+    Viewers that ignore the alpha band or mask (Windows Explorer, Teams) then show this colour,
+    and lossy compression blends edges towards it instead of black."""
+    clear = rgba[..., 3] == 0
+    rgba[clear, :3] = np.asarray(bg_rgb, np.uint8)
+    return rgba
+
+
 def flatten(rgba, bg_rgb):
     """Composite RGBA over a background colour -> RGB uint8."""
     a = rgba[..., 3:4].astype(np.float32) / 255.0

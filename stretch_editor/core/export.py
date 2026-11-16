@@ -195,7 +195,7 @@ def run_export(read_strip, ow, oh, geotransform, wkt, nodes, lut_rgba, settings,
         for r0 in range(0, oh, strip):
             n = min(strip, oh - r0)
             rgba = stretch.apply_lut(read_strip(r0, n), nodes, lut_rgba)
-            data = rgba if nb == 4 else stretch.flatten(rgba, s['bg'])
+            data = stretch.fill_transparent(rgba, s['bg']) if nb == 4 else stretch.flatten(rgba, s['bg'])
             for b in range(nb):
                 ds.GetRasterBand(b + 1).WriteArray(np.ascontiguousarray(data[:, :, b]), 0, r0)
             if progress and progress(0.8 * (r0 + n) / oh, 'Rendering…') is False:

@@ -105,7 +105,7 @@ and negative values then get mirrored colours.
 | Compression | WEBP, JPEG, ZSTD, DEFLATE, LZW or none (GeoTIFF formats) |
 | Mode | Lossy or lossless, where the compression supports both |
 | Quality | 1–100 for JPEG/WEBP; target size % for JPEG2000; level for ZSTD/DEFLATE/PNG |
-| Transparency | Alpha channel, 1-bit mask, or none with a background colour |
+| Transparency | Alpha channel, 1-bit mask, or none. The background colour (default white) fills the nodata collar: with a mask it shows only in viewers that ignore masks, such as Windows Explorer and Teams |
 | Resolution | Cell size in map units (default: the grid's own) or scale 1–1000 %, with resampling |
 | Extras | Overviews, add to map, and a matching colour bar saved alongside |
 

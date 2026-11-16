@@ -190,5 +190,12 @@ class TestExportOptions(unittest.TestCase):
         self.assertEqual(rgba[0, 1, 3], 255)
 
 
+    def test_fill_transparent_uses_background_colour(self):
+        rgba = np.array([[[0, 0, 0, 0], [10, 20, 30, 255]]], np.uint8)
+        out = st.fill_transparent(rgba, [255, 255, 255])
+        self.assertEqual(out[0, 0].tolist(), [255, 255, 255, 0])   # nodata: white, still transparent
+        self.assertEqual(out[0, 1].tolist(), [10, 20, 30, 255])    # data untouched
+
+
 if __name__ == '__main__':
     unittest.main()

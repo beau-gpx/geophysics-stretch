@@ -31,8 +31,9 @@ NOTES = {
                             'anything on recent GDAL; older software (old ER Mapper, MapInfo) may not.',
     ('COG', 'WEBP', True):  'Lossless WEBP: exact pixels, roughly half the size of DEFLATE. Same '
                             'compatibility caveat as lossy WEBP.',
-    ('COG', 'JPEG', False): 'Very widely readable. JPEG has no alpha, so the collar uses a 1-bit mask '
-                            '(or a fill colour).',
+    ('COG', 'JPEG', False): 'Very widely readable. JPEG has no alpha, so the collar uses a 1-bit mask: '
+                            'transparent in QGIS, background colour in viewers that ignore the mask '
+                            '(Windows Explorer, Teams).',
     ('COG', 'ZSTD', True):  'Lossless and fast. Needs readers on GDAL 2.3 or later.',
     ('COG', 'DEFLATE', True): 'Lossless and readable almost everywhere.',
     ('COG', 'LZW', True):   'Lossless, for very old software. Usually larger than DEFLATE.',
@@ -90,6 +91,8 @@ class ExportDialog(QDialog):
         self.bg = QgsColorButton()
         self.bg.setAllowOpacity(False)
         self.bgLabel = QLabel('Background colour')
+        self.bg.setToolTip('Fills the nodata collar. With a 1-bit mask it is transparent in QGIS but '
+                           'shows in viewers that ignore the mask, such as Windows Explorer and Teams.')
         form.addRow(self.bgLabel, self.bg)
 
         rw = QWidget()
@@ -288,8 +291,9 @@ class ExportDialog(QDialog):
         # transparency
         self._fill_transp(fmt, comp, self.transp.currentData())
         none = self.transp.currentData() == 'none'
-        self.bg.setEnabled(none)
-        self.bgLabel.setEnabled(none)
+        # with a mask the colour still shows under the collar in viewers that ignore masks
+        self.bg.setEnabled(self.transp.currentData() in ('none', 'mask'))
+        self.bgLabel.setEnabled(self.bg.isEnabled())
 
         # overviews
         has_ovr = ex.FORMATS[fmt]['overviews']
