@@ -28,6 +28,7 @@ from qgis.PyQt.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -66,6 +67,12 @@ def _tool(text, tip):
     return b
 
 
+def _shrinkable(combo):
+    """Let a layer list shrink in a narrow panel instead of squeezing its neighbours."""
+    combo.setSizeAdjustPolicy(E(QComboBox, 'SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon'))
+    combo.setMinimumContentsLength(8)
+
+
 def _set_quiet(widget, value):
     """Set a spin box value, combo box data or check box without emitting signals."""
     widget.blockSignals(True)
@@ -100,6 +107,8 @@ class StretchDock(QDockWidget):
         self.tern = None                # ternary settings when the layer is a ternary image
         self.chan = 0                   # ternary channel being edited (0 red, 1 green, 2 blue)
         self.chan_rt = []               # per channel: source layer, sample, undo history
+        self.layer_id = None
+        self._tern_listed = False       # the ternary list has been filled once
 
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -113,68 +122,47 @@ class StretchDock(QDockWidget):
         self.update_mirror_widgets()
         self.update_lut()
         self.update_undo_buttons()
+        self.refresh_ternary_list()
         active = self.iface.activeLayer()      # open on the grid already selected in the Layers panel
-        if isinstance(active, QgsRasterLayer):
-            self.layerCombo.blockSignals(True)
-            self.layerCombo.setLayer(active)
-            self.layerCombo.blockSignals(False)
-        self.on_layer(self.layerCombo.currentLayer())
+        self.open_layer(active if isinstance(active, QgsRasterLayer) else self.layerCombo.currentLayer())
 
     # ================================================================ layout
     def _build_ui(self):
         w = QWidget()
         lay = QVBoxLayout(w)
 
-        # layer / band
-        g = QGridLayout()
+        # what is being edited: a single grid, or a ternary (RGB) image
+        self.tabs = QTabWidget()
+        gw = QWidget()
+        g = QGridLayout(gw)
         g.addWidget(QLabel('Layer'), 0, 0)
         self.layerCombo = QgsMapLayerComboBox()
         self.layerCombo.setFilters(layers.raster_layer_filter())
+        _shrinkable(self.layerCombo)
         g.addWidget(self.layerCombo, 0, 1)
         self.lblBand = QLabel('Band')
         g.addWidget(self.lblBand, 1, 0)
         self.bandCombo = QgsRasterBandComboBox()
         g.addWidget(self.bandCombo, 1, 1)
-        self.chkSync = QCheckBox('Sync with Layers panel')
-        self.chkSync.setChecked(True)
-        self.chkSync.setToolTip('Picking a grid here selects it in the Layers panel (expanding its group),\n'
-                                'and selecting a raster in the Layers panel opens it here.')
-        g.addWidget(self.chkSync, 2, 1)
-        lay.addLayout(g)
+        g.setColumnStretch(1, 1)
+        g.setRowStretch(2, 1)
+        self.tabs.addTab(gw, 'Single grid')
 
-        # ternary setup (collapsed): pick three grids and create an RGB layer
-        tb = QgsCollapsibleGroupBox('Ternary image (RGB)')
-        tb.setCollapsed(True)
-        tg = QGridLayout(tb)
-        self.ternLayer, self.ternBand = [], []
-        for i, name in enumerate(ternary.CHANNELS):
-            lbl = QLabel(name)
-            lbl.setStyleSheet(f'color: {CHANNEL_CSS[i]}; font-weight: bold;')
-            tg.addWidget(lbl, i, 0)
-            lc = QgsMapLayerComboBox()
-            lc.setFilters(layers.raster_layer_filter())
-            bc = QgsRasterBandComboBox()
-            bc.setLayer(lc.currentLayer())
-            lc.layerChanged.connect(bc.setLayer)
-            tg.addWidget(lc, i, 1)
-            tg.addWidget(bc, i, 2)
-            self.ternLayer.append(lc)
-            self.ternBand.append(bc)
-        tg.setColumnStretch(1, 1)
+        tw = QWidget()
+        tl = QVBoxLayout(tw)
         row = QHBoxLayout()
-        self.btnTernGuess = QPushButton('Guess K / Th / U')
-        self.btnTernGuess.setToolTip('Pick the layers whose names look like potassium, thorium and uranium')
-        self.btnTernCreate = QPushButton('Create ternary layer…')
-        self.btnTernCreate.setToolTip('Save a small virtual raster (.vrt) that combines the three grids as\n'
-                                      'red, green and blue, add it to the map and open it here.\n'
-                                      'Each channel then gets its own curve, presets and clip limits.')
-        row.addWidget(self.btnTernGuess)
-        row.addStretch()
-        row.addWidget(self.btnTernCreate)
-        tg.addLayout(row, 3, 0, 1, 3)
-        lay.addWidget(tb)
+        row.addWidget(QLabel('Layer'))
+        self.ternCombo = QComboBox()
+        self.ternCombo.setToolTip('The ternary layer to edit (ternary layers in this project)')
+        _shrinkable(self.ternCombo)
+        row.addWidget(self.ternCombo, 1)
+        tl.addLayout(row)
+        self.lblNoTern = QLabel('No ternary layers in this project yet: create one below.')
+        self.lblNoTern.setStyleSheet('color: gray;')
+        self.lblNoTern.setWordWrap(True)
+        tl.addWidget(self.lblNoTern)
 
-        # ternary channel selector (shown when the layer is a ternary image)
+        # channel selector (shown when a ternary layer is open)
         self.chanBar = QWidget()
         cl = QHBoxLayout(self.chanBar)
         cl.setContentsMargins(0, 0, 0, 0)
@@ -193,7 +181,55 @@ class StretchDock(QDockWidget):
                                   'on a white background (prints well)')
         cl.addWidget(self.chkInvert)
         self.chanBar.setVisible(False)
-        lay.addWidget(self.chanBar)
+        tl.addWidget(self.chanBar)
+
+        # new ternary layer: pick three grids
+        self.newTernBox = QgsCollapsibleGroupBox('New ternary layer')
+        tg = QGridLayout(self.newTernBox)
+        self.ternLayer, self.ternBand = [], []
+        for i, name in enumerate(ternary.CHANNELS):
+            lbl = QLabel(name)
+            lbl.setStyleSheet(f'color: {CHANNEL_CSS[i]}; font-weight: bold;')
+            tg.addWidget(lbl, i, 0)
+            lc = QgsMapLayerComboBox()
+            lc.setFilters(layers.raster_layer_filter())
+            _shrinkable(lc)
+            bc = QgsRasterBandComboBox()
+            bc.setToolTip('Band (shown for multi-band grids)')
+            act = _tool('Active', 'Use the layer selected in the Layers panel')
+            act.clicked.connect(lambda _=False, i=i: self.use_active_layer(i))
+            lc.layerChanged.connect(lambda lyr, bc=bc: self._set_tern_band(bc, lyr))
+            self._set_tern_band(bc, lc.currentLayer())
+            tg.addWidget(lc, i, 1)
+            tg.addWidget(bc, i, 2)
+            tg.addWidget(act, i, 3)
+            self.ternLayer.append(lc)
+            self.ternBand.append(bc)
+        tg.setColumnStretch(1, 1)
+        row = QHBoxLayout()
+        self.btnTernGuess = QPushButton('Guess K / Th / U')
+        self.btnTernGuess.setToolTip('Pick the layers whose names look like potassium, thorium and uranium\n'
+                                     '(or the first three bands of the multi-band grid selected in the Layers panel)')
+        self.btnTernCreate = QPushButton('Create…')
+        self.btnTernCreate.setToolTip('Save a small virtual raster (.vrt) that combines the three grids as\n'
+                                      'red, green and blue, add it to the map and open it here.\n'
+                                      'Each channel then gets its own curve, presets and clip limits.')
+        row.addWidget(self.btnTernGuess)
+        row.addStretch()
+        row.addWidget(self.btnTernCreate)
+        tg.addLayout(row, 3, 0, 1, 4)
+        tl.addWidget(self.newTernBox)
+        tl.addStretch()
+        self.tabs.addTab(tw, 'Ternary (RGB)')
+        lay.addWidget(self.tabs)
+
+        self.chkSync = QCheckBox('Sync with Layers panel')
+        self.chkSync.setChecked(True)
+        self.chkSync.setToolTip('Picking a layer here selects it in the Layers panel (expanding its group),\n'
+                                'and selecting a raster in the Layers panel opens it here.\n'
+                                'On the Ternary tab only ternary layers are followed, so you can select\n'
+                                'grids in the Layers panel and use them with the Active buttons.')
+        lay.addWidget(self.chkSync)
 
         # curve editor + undo/redo
         self.curve = CurveWidget()
@@ -385,7 +421,11 @@ class StretchDock(QDockWidget):
         c.viewChanged.connect(self.on_curve_view)
         c.undoRequested.connect(self.undo)            # Ctrl+Z / Ctrl+Y while the curve has focus
         c.redoRequested.connect(self.redo)
-        self.layerCombo.layerChanged.connect(self.on_layer)
+        self.layerCombo.layerChanged.connect(self.open_layer)
+        self.ternCombo.currentIndexChanged.connect(self.on_tern_combo)
+        self.tabs.currentChanged.connect(self.on_tab)
+        QgsProject.instance().layersAdded.connect(self.refresh_ternary_list)
+        QgsProject.instance().layersRemoved.connect(self.refresh_ternary_list)
         self.bandCombo.bandChanged.connect(self.on_band)
         self.iface.currentLayerChanged.connect(self.on_active_layer)
         self.btnUndo.clicked.connect(self.undo)
@@ -425,23 +465,93 @@ class StretchDock(QDockWidget):
 
     def cleanup(self):
         """Disconnect from QGIS when the plugin unloads."""
-        try:
-            self.iface.currentLayerChanged.disconnect(self.on_active_layer)
-        except Exception:
-            pass
+        for signal, slot in ((self.iface.currentLayerChanged, self.on_active_layer),
+                             (QgsProject.instance().layersAdded, self.refresh_ternary_list),
+                             (QgsProject.instance().layersRemoved, self.refresh_ternary_list)):
+            try:
+                signal.disconnect(slot)
+            except Exception:
+                pass
 
     # ================================================================ opening a grid
-    def on_layer(self, layer):
+    def open_layer(self, layer):
+        """Edit a layer: a ternary layer opens on the Ternary tab, any other raster on the
+        Single grid tab (both pickers and the tab follow quietly)."""
         self.layer = layer if isinstance(layer, QgsRasterLayer) else None
+        self.layer_id = self.layer.id() if self.layer is not None else None
         tern = state.load_ternary(self.layer) if self.layer is not None else None
+        if self.layer is not None:
+            self.tabs.blockSignals(True)
+            self.tabs.setCurrentIndex(1 if tern is not None else 0)
+            self.tabs.blockSignals(False)
         if tern is not None:
+            _set_quiet(self.ternCombo, self.layer.id())
             self.open_ternary(tern)
         else:
             self.set_ternary_mode(False)
+            if self.layer is not None and self.layerCombo.currentLayer() is not self.layer:
+                self.layerCombo.blockSignals(True)
+                self.layerCombo.setLayer(self.layer)
+                self.layerCombo.blockSignals(False)
             self.bandCombo.setLayer(self.layer)
             self.on_band(self.bandCombo.currentBand())
         if self.layer is not None and self.chkSync.isChecked():
             self.show_in_layers_panel(self.layer)
+
+    def on_tab(self, i):
+        if i == 1:
+            lyr = QgsProject.instance().mapLayer(self.ternCombo.currentData() or '')
+            if lyr is not None:
+                self.open_layer(lyr)
+            else:                                  # nothing to edit until a ternary layer exists
+                self.layer = None
+                self.set_ternary_mode(False)
+                self.sample = None
+                self.curve.set_sample(None)
+                self.curve.set_nodes([])
+                self.reset_history()
+        else:
+            self.open_layer(self.layerCombo.currentLayer())
+
+    def on_tern_combo(self, _i):
+        lyr = QgsProject.instance().mapLayer(self.ternCombo.currentData() or '')
+        if lyr is not None and lyr is not self.layer:
+            self.open_layer(lyr)
+
+    def refresh_ternary_list(self, *_):
+        """List the project's ternary layers on the Ternary tab, and keep them out of the
+        single-grid and channel pickers."""
+        rasters = [lyr for lyr in QgsProject.instance().mapLayers().values() if isinstance(lyr, QgsRasterLayer)]
+        terns = [lyr for lyr in rasters if state.load_ternary(lyr) is not None]
+        keep = self.ternCombo.currentData()
+        self.ternCombo.blockSignals(True)
+        self.ternCombo.clear()
+        for lyr in terns:
+            self.ternCombo.addItem(lyr.name(), lyr.id())
+        i = self.ternCombo.findData(keep)
+        self.ternCombo.setCurrentIndex(i if i >= 0 else 0)
+        self.ternCombo.blockSignals(False)
+        self.ternCombo.setEnabled(bool(terns))
+        self.lblNoTern.setVisible(not terns)
+        if not terns or not self._tern_listed:
+            self.newTernBox.setCollapsed(bool(terns))
+        self._tern_listed = True
+        for combo in [self.layerCombo] + self.ternLayer:
+            combo.setExceptedLayerList(terns)
+        if self.tern is not None and self.layer_id not in QgsProject.instance().mapLayers():
+            self.on_tab(1)                         # the open ternary layer was removed
+
+    @staticmethod
+    def _set_tern_band(bc, lyr):
+        bc.setLayer(lyr)
+        bc.setVisible(lyr is not None and lyr.bandCount() > 1)
+
+    def use_active_layer(self, i):
+        lyr = self.iface.activeLayer()
+        if isinstance(lyr, QgsRasterLayer) and state.load_ternary(lyr) is None:
+            self.ternLayer[i].setLayer(lyr)
+        else:
+            self.iface.messageBar().pushInfo(TITLE, 'Select a grid (raster layer) in the Layers panel first.')
 
     def on_band(self, band):
         """Load a band: sample it, restore its saved stretch (or start from its current style).
@@ -543,12 +653,15 @@ class StretchDock(QDockWidget):
     def on_active_layer(self, layer):
         if self._syncing or not self.chkSync.isChecked():
             return
-        if isinstance(layer, QgsRasterLayer) and layer is not self.layer:
-            self._syncing = True
-            try:
-                self.layerCombo.setLayer(layer)
-            finally:
-                self._syncing = False
+        if not isinstance(layer, QgsRasterLayer) or layer is self.layer:
+            return
+        if self.tabs.currentIndex() == 1 and state.load_ternary(layer) is None:
+            return              # on the Ternary tab, selecting grids is for the Active buttons
+        self._syncing = True
+        try:
+            self.open_layer(layer)
+        finally:
+            self._syncing = False
 
     # ================================================================ histogram display
     def on_log_hist(self, on):
@@ -1053,7 +1166,7 @@ class StretchDock(QDockWidget):
         """Show the channel buttons instead of the band and colour ramp choices."""
         if not on:
             self.tern, self.chan_rt = None, []
-        for wdg in (self.lblBand, self.bandCombo, self.lblRamp, self.rampBtn):
+        for wdg in (self.lblRamp, self.rampBtn):
             wdg.setVisible(not on)
         self.chanBar.setVisible(on)
         self.btnBar.setText('Ternary legend…' if on else 'Colour bar…')
@@ -1158,8 +1271,9 @@ class StretchDock(QDockWidget):
                 if k is not None:
                     self.ternLayer[i].setLayer(rasters[k])
             return
-        multi = (self.layer if self.layer is not None and self.tern is None and self.layer.bandCount() >= 3
-                 else None)
+        active = self.iface.activeLayer()
+        multi = (active if isinstance(active, QgsRasterLayer) and active.bandCount() >= 3
+                 and state.load_ternary(active) is None else None)
         if multi is not None:                    # one multi-band grid: use its first three bands
             for i in range(3):
                 self.ternLayer[i].setLayer(multi)
@@ -1233,8 +1347,9 @@ class StretchDock(QDockWidget):
             return
         state.save_ternary(lyr, tern)
         styling.apply_ternary(lyr)
-        QgsProject.instance().addMapLayer(lyr)
-        self.layerCombo.setLayer(lyr)            # opens it here (and in the Layers panel)
+        QgsProject.instance().addMapLayer(lyr)   # refreshes the ternary list
+        if self.layer is not lyr:                # (Layers panel sync may already have opened it)
+            self.open_layer(lyr)
 
     def export_ternary_legend(self):
         path, _ = QFileDialog.getSaveFileName(self, 'Save ternary legend', self._default_name('_legend.png'),

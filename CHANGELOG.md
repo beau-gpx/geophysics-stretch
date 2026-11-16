@@ -2,8 +2,10 @@
 
 ## v2.2.0 — 2026-11-16
 - **Ternary images (RGB):** combine three grids as red, green and blue, e.g. radiometric K, Th and U.
-  Set them up in the new **Ternary image (RGB)** box (with **Guess K / Th / U**), then edit each
-  channel with the **R / G / B** buttons: its own histogram, curve, presets, clip limits and undo.
+  The top of the panel now has **Single grid** and **Ternary (RGB)** tabs. On the Ternary tab, pick
+  the three grids (**Active** takes the layer selected in the Layers panel; **Guess K / Th / U** picks
+  them by name), then edit each channel with the **R / G / B** buttons: its own histogram, curve,
+  presets, clip limits and undo.
   **Invert (CMY)** for print-style images. Nodata in any channel is transparent; grids with
   different extents or cell sizes are combined at the finest cell.
 - The ternary layer is a small GDAL virtual raster (`.vrt`) holding the curves as lookup tables, so

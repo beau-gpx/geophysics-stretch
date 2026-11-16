@@ -103,14 +103,21 @@ and negative values then get mirrored colours.
 ### Ternary images (RGB)
 Combine three grids as red, green and blue, e.g. radiometric potassium, thorium and uranium.
 
-1. Open **Ternary image (RGB)** near the top of the panel.
-2. Pick the grid (and band) for **Red**, **Green** and **Blue**, or click **Guess K / Th / U** to pick
-   layers named like K, Th and U (or potassium, thorium, uranium). For one multi-band grid, select it
-   first; Guess then uses its first three bands.
-3. Click **Create ternary layer…** and choose where to save it. It's a small `.vrt` file that points at
-   your grids; nothing is copied. The layer is added to the map and opened in the editor.
+The top of the panel has two tabs: **Single grid** and **Ternary (RGB)**. The curve editor below works
+on whichever is selected.
 
-Each channel starts as **Linear** from the 1 % to 99 % percentiles. Use the **R / G / B** buttons to
+1. Open the **Ternary (RGB)** tab. Under **New ternary layer**, pick the grid for **Red**, **Green** and
+   **Blue**. **Active** next to each one takes the layer selected in the Layers panel; on this tab,
+   selecting ordinary grids in the Layers panel doesn't open them in the editor, so you can click
+   through them freely. **Guess K / Th / U** picks layers named like K, Th and U (or potassium,
+   thorium, uranium), or the first three bands of a multi-band grid selected in the Layers panel.
+   A band list appears for multi-band grids.
+2. Click **Create…** and choose where to save it. It's a small `.vrt` file that points at your grids;
+   nothing is copied. The layer is added to the map and opened in the editor.
+3. Later, pick it from the **Layer** list on the Ternary tab, or select it in the Layers panel.
+
+Each channel starts as **Linear** from the 1 % to 99 % percentiles. Use the **R / G / B** buttons on the
+Ternary tab to
 choose the channel to edit: it gets its own histogram, curve, presets, clip limits, mirror settings
 and undo. The strip under the histogram shows that channel's colour. **Invert (CMY)** swaps to cyan,
 magenta and yellow on white, which suits printing.
