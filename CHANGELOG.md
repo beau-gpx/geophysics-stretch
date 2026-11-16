@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.2.0 — 2026-11-16
+- **Ternary images (RGB):** combine three grids as red, green and blue, e.g. radiometric K, Th and U.
+  Set them up in the new **Ternary image (RGB)** box (with **Guess K / Th / U**), then edit each
+  channel with the **R / G / B** buttons: its own histogram, curve, presets, clip limits and undo.
+  **Invert (CMY)** for print-style images. Nodata in any channel is transparent; grids with
+  different extents or cell sizes are combined at the finest cell.
+- The ternary layer is a small GDAL virtual raster (`.vrt`) holding the curves as lookup tables, so
+  QGIS draws it natively and it looks the same in other GDAL-based software. The plugin's settings
+  are embedded in it, so it stays editable in a new project.
+- Image export works for ternary layers, and **Ternary legend…** saves a triangle legend (PNG, SVG
+  or PDF), also available alongside an exported image.
+
 ## v2.1.0 — 2026-11-16
 - Renamed **SDP Imaging** (SDP = Spatial Data Portal), with a new icon. Menus, toolbar and panel use
   the new name: **Raster → SDP Imaging**. It's an in-place upgrade: installing the new ZIP replaces

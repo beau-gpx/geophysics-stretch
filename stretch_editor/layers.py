@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 Beau Garland
 """Reading raster data from QGIS layers, and small helpers for the layer being edited."""
+import os
+
 import numpy as np
 from qgis.core import Qgis, QgsMapLayerProxyModel, QgsProject
 
@@ -138,3 +140,27 @@ def provider_resampling(provider, method):
     except Exception:
         ok = False
     return restore, bool(ok) or method == 'nearest'
+
+
+def grid_info(layer, band):
+    """Georeferencing of a file-based GDAL grid, for building a ternary VRT:
+    dict(path, band, name, w, h, gt, nodata, wkt, authid). Raises ValueError otherwise."""
+    prov = layer.dataProvider()
+    path = layer.source().split('|')[0]
+    if prov.name() != 'gdal' or not os.path.isfile(path):
+        raise ValueError(f'{layer.name()} is not a grid file GDAL can read (e.g. a web or database layer)')
+    ext = layer.extent()
+    w, h = layer.width(), layer.height()
+    nodata = prov.sourceNoDataValue(band) if prov.sourceHasNoDataValue(band) else None
+    return {'path': os.path.abspath(path), 'band': int(band), 'name': layer.name(), 'w': w, 'h': h,
+            'gt': (ext.xMinimum(), ext.width() / w, 0.0, ext.yMaximum(), 0.0, -ext.height() / h),
+            'nodata': nodata, 'wkt': layer.crs().toWkt(), 'authid': layer.crs().authid()}
+
+
+def open_grid(path, name):
+    """A raster layer for a file, not added to the project (for reading ternary channels)."""
+    from qgis.core import QgsRasterLayer
+    lyr = QgsRasterLayer(path, name)
+    if not lyr.isValid():
+        raise ValueError(f'could not open {path}')
+    return lyr

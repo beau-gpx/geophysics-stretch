@@ -172,8 +172,9 @@ def gdal_capabilities():
     return comps, fmts
 
 
-def run_export(read_strip, ow, oh, geotransform, wkt, nodes, lut_rgba, settings, out, progress=None):
-    """read_strip(row0, nrows) -> float array (nrows, ow) with NaN for nodata.
+def run_export(rgba_strip, ow, oh, geotransform, wkt, settings, out, progress=None):
+    """rgba_strip(row0, nrows) -> uint8 array (nrows, ow, 4), alpha 0 for nodata
+    (e.g. stretch.apply_lut on a single band, or ternary.render on three).
     progress(fraction, message) -> False to cancel. Returns True if written."""
     from osgeo import gdal
     gdal.UseExceptions()
@@ -194,7 +195,7 @@ def run_export(read_strip, ow, oh, geotransform, wkt, nodes, lut_rgba, settings,
         strip = 512
         for r0 in range(0, oh, strip):
             n = min(strip, oh - r0)
-            rgba = stretch.apply_lut(read_strip(r0, n), nodes, lut_rgba)
+            rgba = rgba_strip(r0, n)
             data = stretch.fill_transparent(rgba, s['bg']) if nb == 4 else stretch.flatten(rgba, s['bg'])
             for b in range(nb):
                 ds.GetRasterBand(b + 1).WriteArray(np.ascontiguousarray(data[:, :, b]), 0, r0)

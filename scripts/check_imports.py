@@ -19,7 +19,8 @@ STUBBED = ['qgis', 'qgis.core', 'qgis.gui', 'qgis.PyQt', 'qgis.PyQt.QtCore', 'qg
            'qgis.PyQt.QtWidgets', 'qgis.PyQt.QtSvg', 'osgeo', 'osgeo.gdal']
 
 MODULES = ['stretch_editor', 'stretch_editor.compat', 'stretch_editor.core.stretch', 'stretch_editor.core.colourbar',
-           'stretch_editor.core.export', 'stretch_editor.layers', 'stretch_editor.styling', 'stretch_editor.state',
+           'stretch_editor.core.export', 'stretch_editor.core.ternary', 'stretch_editor.layers',
+           'stretch_editor.styling', 'stretch_editor.state',
            'stretch_editor.legend', 'stretch_editor.ui.curve_widget', 'stretch_editor.ui.export_dialog',
            'stretch_editor.ui.colourbar_dialog', 'stretch_editor.ui.dock', 'stretch_editor.plugin']
 
@@ -27,7 +28,8 @@ MODULES = ['stretch_editor', 'stretch_editor.compat', 'stretch_editor.core.stret
 ALIASES = {'layers': 'stretch_editor.layers', 'styling': 'stretch_editor.styling', 'state': 'stretch_editor.state',
            'legend': 'stretch_editor.legend', 'stretch': 'stretch_editor.core.stretch',
            'st': 'stretch_editor.core.stretch', 'export': 'stretch_editor.core.export',
-           'ex': 'stretch_editor.core.export', 'cb': 'stretch_editor.core.colourbar'}
+           'ex': 'stretch_editor.core.export', 'ternary': 'stretch_editor.core.ternary',
+           'tn': 'stretch_editor.core.ternary', 'cb': 'stretch_editor.core.colourbar'}
 
 
 class _Meta(type):

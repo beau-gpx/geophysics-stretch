@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (C) 2026 Beau Garland
 """The SDP Imaging panel: layer/band choice, curve editing, clip limits, mirror mode,
-undo/redo, live styling, and image / colour bar / style export."""
+undo/redo, live styling, ternary (RGB) images, and image / colour bar / style export."""
 import copy
 import os
+import re
 
 import numpy as np
-from qgis.core import QgsRasterLayer, QgsRectangle
+from qgis.core import QgsProject, QgsRasterLayer, QgsRectangle
 from qgis.gui import QgsCollapsibleGroupBox, QgsColorRampButton, QgsMapLayerComboBox, QgsRasterBandComboBox
 from qgis.PyQt.QtCore import Qt, QTimer
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -33,7 +35,7 @@ from qgis.PyQt.QtWidgets import (
 
 from .. import layers, legend, state, styling
 from ..compat import E
-from ..core import export, stretch
+from ..core import export, stretch, ternary
 from .colourbar_dialog import ColourBarDialog
 from .colourbar_dialog import stored_settings as colourbar_settings
 from .curve_widget import CurveWidget
@@ -44,6 +46,8 @@ SAMPLE_MAX = 1200               # histogram sample: max pixels on the long side
 HISTORY_MAX = 200               # undo steps kept
 DEFAULT_POINTS = {'linear': 32, 'histeq': 32, 'log': 32}
 LIVE_DELAY_MS = 150             # live update waits this long after the last change
+TERNARY_CLIP = (1.0, 99.0)      # new ternary channels start as Linear over these percentiles
+CHANNEL_CSS = ['#d62728', '#2ca02c', '#1f5fd6']
 
 
 def _value_spin():
@@ -93,6 +97,9 @@ class StretchDock(QDockWidget):
         self._syncing = False           # True while syncing with the Layers panel
         self._centre_prev = 0.0
         self._slope_prev = 1.0
+        self.tern = None                # ternary settings when the layer is a ternary image
+        self.chan = 0                   # ternary channel being edited (0 red, 1 green, 2 blue)
+        self.chan_rt = []               # per channel: source layer, sample, undo history
 
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -124,7 +131,8 @@ class StretchDock(QDockWidget):
         self.layerCombo = QgsMapLayerComboBox()
         self.layerCombo.setFilters(layers.raster_layer_filter())
         g.addWidget(self.layerCombo, 0, 1)
-        g.addWidget(QLabel('Band'), 1, 0)
+        self.lblBand = QLabel('Band')
+        g.addWidget(self.lblBand, 1, 0)
         self.bandCombo = QgsRasterBandComboBox()
         g.addWidget(self.bandCombo, 1, 1)
         self.chkSync = QCheckBox('Sync with Layers panel')
@@ -133,6 +141,59 @@ class StretchDock(QDockWidget):
                                 'and selecting a raster in the Layers panel opens it here.')
         g.addWidget(self.chkSync, 2, 1)
         lay.addLayout(g)
+
+        # ternary setup (collapsed): pick three grids and create an RGB layer
+        tb = QgsCollapsibleGroupBox('Ternary image (RGB)')
+        tb.setCollapsed(True)
+        tg = QGridLayout(tb)
+        self.ternLayer, self.ternBand = [], []
+        for i, name in enumerate(ternary.CHANNELS):
+            lbl = QLabel(name)
+            lbl.setStyleSheet(f'color: {CHANNEL_CSS[i]}; font-weight: bold;')
+            tg.addWidget(lbl, i, 0)
+            lc = QgsMapLayerComboBox()
+            lc.setFilters(layers.raster_layer_filter())
+            bc = QgsRasterBandComboBox()
+            bc.setLayer(lc.currentLayer())
+            lc.layerChanged.connect(bc.setLayer)
+            tg.addWidget(lc, i, 1)
+            tg.addWidget(bc, i, 2)
+            self.ternLayer.append(lc)
+            self.ternBand.append(bc)
+        tg.setColumnStretch(1, 1)
+        row = QHBoxLayout()
+        self.btnTernGuess = QPushButton('Guess K / Th / U')
+        self.btnTernGuess.setToolTip('Pick the layers whose names look like potassium, thorium and uranium')
+        self.btnTernCreate = QPushButton('Create ternary layer…')
+        self.btnTernCreate.setToolTip('Save a small virtual raster (.vrt) that combines the three grids as\n'
+                                      'red, green and blue, add it to the map and open it here.\n'
+                                      'Each channel then gets its own curve, presets and clip limits.')
+        row.addWidget(self.btnTernGuess)
+        row.addStretch()
+        row.addWidget(self.btnTernCreate)
+        tg.addLayout(row, 3, 0, 1, 3)
+        lay.addWidget(tb)
+
+        # ternary channel selector (shown when the layer is a ternary image)
+        self.chanBar = QWidget()
+        cl = QHBoxLayout(self.chanBar)
+        cl.setContentsMargins(0, 0, 0, 0)
+        self.chanBtn = []
+        for i in range(3):
+            b = QToolButton()
+            b.setCheckable(True)
+            b.setAutoExclusive(True)
+            b.setToolButtonStyle(E(Qt, 'ToolButtonStyle.ToolButtonTextOnly'))
+            b.setStyleSheet(f'QToolButton {{ border-bottom: 3px solid {CHANNEL_CSS[i]}; padding: 2px 6px; }}'
+                            f'QToolButton:checked {{ font-weight: bold; }}')
+            cl.addWidget(b, 1)
+            self.chanBtn.append(b)
+        self.chkInvert = QCheckBox('Invert (CMY)')
+        self.chkInvert.setToolTip('Invert all three channels: high values become cyan, magenta and yellow\n'
+                                  'on a white background (prints well)')
+        cl.addWidget(self.chkInvert)
+        self.chanBar.setVisible(False)
+        lay.addWidget(self.chanBar)
 
         # curve editor + undo/redo
         self.curve = CurveWidget()
@@ -228,6 +289,7 @@ class StretchDock(QDockWidget):
 
         # advanced (collapsed): mirror the stretch about a centre value
         adv = QgsCollapsibleGroupBox('Advanced')
+        self.advBox = adv
         adv.setCollapsed(True)
         ag = QGridLayout(adv)
         self.chkMirror = QCheckBox('Mirror about centre')
@@ -281,7 +343,8 @@ class StretchDock(QDockWidget):
 
         # colour ramp + apply
         row = QHBoxLayout()
-        row.addWidget(QLabel('Colour ramp'))
+        self.lblRamp = QLabel('Colour ramp')
+        row.addWidget(self.lblRamp)
         self.rampBtn = QgsColorRampButton()
         self.rampBtn.setDefaultColorRamp(styling.default_ramp())
         self.rampBtn.setColorRamp(styling.default_ramp())
@@ -354,6 +417,11 @@ class StretchDock(QDockWidget):
         self.btnExport.clicked.connect(self.export_image)
         self.btnBar.clicked.connect(self.export_colourbar)
         self.btnStyle.clicked.connect(self.save_style)
+        self.btnTernGuess.clicked.connect(self.guess_ternary)
+        self.btnTernCreate.clicked.connect(self.create_ternary)
+        for i, b in enumerate(self.chanBtn):
+            b.clicked.connect(lambda _=False, i=i: self.load_channel(i))
+        self.chkInvert.toggled.connect(self.on_invert)
 
     def cleanup(self):
         """Disconnect from QGIS when the plugin unloads."""
@@ -365,14 +433,21 @@ class StretchDock(QDockWidget):
     # ================================================================ opening a grid
     def on_layer(self, layer):
         self.layer = layer if isinstance(layer, QgsRasterLayer) else None
-        self.bandCombo.setLayer(self.layer)
-        self.on_band(self.bandCombo.currentBand())
+        tern = state.load_ternary(self.layer) if self.layer is not None else None
+        if tern is not None:
+            self.open_ternary(tern)
+        else:
+            self.set_ternary_mode(False)
+            self.bandCombo.setLayer(self.layer)
+            self.on_band(self.bandCombo.currentBand())
         if self.layer is not None and self.chkSync.isChecked():
             self.show_in_layers_panel(self.layer)
 
     def on_band(self, band):
         """Load a band: sample it, restore its saved stretch (or start from its current style).
         Opening a grid never restyles it; the first edit or Apply does."""
+        if self.tern is not None:
+            return
         self.sample = None
         if self.layer is None or band is None or band < 1:
             self.curve.set_sample(None)
@@ -384,8 +459,15 @@ class StretchDock(QDockWidget):
         except Exception as e:
             QMessageBox.warning(self, TITLE, f'Could not read band: {e}')
             return
-        self.sample = s
+        saved = state.load(self.layer)
+        same = saved if saved and saved.get('band') == band else None
+        self._open_sample(s, same, (saved or {}).get('display', {}),
+                          lambda: layers.existing_stretch_range(self.layer, band))
 
+    def _open_sample(self, s, saved, disp, existing=None, history=None):
+        """Show a sample in the editor and restore its saved curve and settings (saved: a state
+        dict, or None to start from existing() (the layer's current range) or the clip limits)."""
+        self.sample = s
         self._loading = True
         dlo, dhi = stretch.data_range(s)
         step = (dhi - dlo) / 200.0 or 1.0
@@ -393,22 +475,19 @@ class StretchDock(QDockWidget):
             sb.setSingleStep(step)
         self.curve.set_sample(s)
 
-        saved = state.load(self.layer)
-        same_band = bool(saved) and saved.get('band') == band
-        disp = (saved or {}).get('display', {})
         _set_quiet(self.chkLogHist, disp.get('log_counts', self.chkLogHist.isChecked()))
         _set_quiet(self.chkLogX, disp.get('log_x', self.chkLogX.isChecked()))
         self.curve.set_log_hist(self.chkLogHist.isChecked())
         self.curve.set_xlog(self.chkLogX.isChecked())
 
-        mirror = saved.get('mirror', {}) if same_band else {}
+        mirror = (saved or {}).get('mirror', {})
         _set_quiet(self.centre, mirror.get('centre', 0.0))
         _set_quiet(self.chkMirror, mirror.get('on', False))
         _set_quiet(self.slope, mirror.get('slope', 1.0))
         self._centre_prev, self._slope_prev = self.centre.value(), self.slope.value()
         self.curve.set_mirror(self.centre.value() if self.chkMirror.isChecked() else None)
 
-        if same_band and len(saved.get('nodes', [])) >= 2:
+        if saved and len(saved.get('nodes', [])) >= 2:
             ramp = styling.ramp_from_dict(saved.get('ramp', {}))
             if ramp:
                 self.rampBtn.setColorRamp(ramp)
@@ -426,7 +505,7 @@ class StretchDock(QDockWidget):
             view, view_mode = saved.get('view') or (dlo, dhi), saved['view_mode']
         else:
             self.last_preset, self.edited = 'linear', False
-            current = layers.existing_stretch_range(self.layer, band)
+            current = existing() if existing else None
             if current:                       # start from the stretch the layer already has
                 lo, hi = current
                 _set_quiet(self.clipMode, 'val')
@@ -442,7 +521,11 @@ class StretchDock(QDockWidget):
         self.set_view(*view, view_mode)
         self.sync_points()
         self._loading = False
-        self.reset_history()
+        if history and history[0]:
+            self.history, self.hpos = history
+            self.update_undo_buttons()
+        else:
+            self.reset_history()
         self.update_lut()
 
     # ================================================================ Layers panel sync
@@ -714,6 +797,8 @@ class StretchDock(QDockWidget):
             self.on_selection(i)
 
     def on_ramp(self):
+        if self.tern is not None:
+            return
         self.update_lut()
         if self._loading:                      # ramp restored while opening a grid: don't restyle
             return
@@ -722,7 +807,11 @@ class StretchDock(QDockWidget):
 
     def update_lut(self):
         self.lut_q, self.lut_rgba = styling.colour_lut(self.rampBtn.colorRamp())
-        self.curve.set_lut(self.lut_q[::4])
+        if self.tern is not None:            # the channel's own colour, black to full (or CMY)
+            cols = ternary.channel_colours(self.chan, self.chkInvert.isChecked())
+            self.curve.set_lut([QColor(int(r), int(g), int(b)) for r, g, b in cols])
+        else:
+            self.curve.set_lut(self.lut_q[::4])
 
     # ================================================================ undo / redo
     def _snapshot(self):
@@ -775,8 +864,11 @@ class StretchDock(QDockWidget):
 
     # ================================================================ styling and saved state
     def apply(self):
-        """Style the layer with the current curve and colour ramp."""
+        """Style the layer with the current curve and colour ramp (ternary: rewrite its VRT)."""
         if self.layer is None or len(self.curve.nodes) < 2:
+            return
+        if self.tern is not None:
+            self.write_ternary()
             return
         styling.apply_stretch(self.layer, self.bandCombo.currentBand(), self.curve.nodes,
                               self.lut_q, self.rampBtn.colorRamp())
@@ -784,9 +876,7 @@ class StretchDock(QDockWidget):
     def save_state(self):
         if self.layer is None or self._loading or len(self.curve.nodes) < 2:
             return
-        ramp = self.rampBtn.colorRamp()
-        state.save(self.layer, {
-            'band': self.bandCombo.currentBand(),
+        st = {
             'nodes': self.curve.nodes,
             'preset': self.last_preset,
             'edited': self.edited,
@@ -799,8 +889,17 @@ class StretchDock(QDockWidget):
             'display': {'log_counts': self.chkLogHist.isChecked(), 'log_x': self.chkLogX.isChecked()},
             'mirror': {'on': self.chkMirror.isChecked(), 'centre': self.centre.value(),
                        'slope': self.slope.value()},
-            'ramp': styling.ramp_to_dict(ramp) if ramp else {},
-        })
+        }
+        if self.tern is not None:
+            self.tern['channels'][self.chan]['state'] = copy.deepcopy(st)
+            self.tern['active'] = self.chan
+            self.tern['invert'] = self.chkInvert.isChecked()
+            state.save_ternary(self.layer, self.tern)
+            return
+        ramp = self.rampBtn.colorRamp()
+        st['band'] = self.bandCombo.currentBand()
+        st['ramp'] = styling.ramp_to_dict(ramp) if ramp else {}
+        state.save(self.layer, st)
 
     # ================================================================ files
     def _default_name(self, suffix):
@@ -808,7 +907,7 @@ class StretchDock(QDockWidget):
         src = self.layer.source().split('|')[0]
         base = (os.path.splitext(src)[0] if os.path.exists(src)
                 else os.path.join(os.path.expanduser('~'), self.layer.name()))
-        return base + '_stretch' + suffix
+        return base + ('' if self.tern is not None else '_stretch') + suffix
 
     def save_style(self):
         if self.layer is None:
@@ -826,6 +925,9 @@ class StretchDock(QDockWidget):
 
     def export_colourbar(self):
         if self.layer is None or len(self.curve.nodes) < 2:
+            return
+        if self.tern is not None:
+            self.export_ternary_legend()
             return
         dlg = ColourBarDialog(self.layer.name(), self._nodes_copy(), self.lut_q, parent=self)
         if not dlg.exec():
@@ -855,10 +957,14 @@ class StretchDock(QDockWidget):
     def export_image(self):
         if self.layer is None or len(self.curve.nodes) < 2:
             return
-        lyr, prov, band = self.layer, self.layer.dataProvider(), self.bandCombo.currentBand()
+        if self.tern is not None and any(rt['layer'] is None for rt in self.chan_rt):
+            QMessageBox.warning(self, TITLE, 'One of the ternary channels\' grids could not be read, so the '
+                                             'image can\'t be exported. Check the grids are where they were.')
+            return
+        lyr = self.layer
         ext = lyr.extent()
         dlg = ExportDialog(lyr.width(), lyr.height(), ext.width(), ext.height(), layers.map_units(lyr), self,
-                           colourbar_cb=self.colourbar_settings_dialog)
+                           colourbar_cb=None if self.tern is not None else self.colourbar_settings_dialog)
         if not dlg.exec():
             return
         s = dlg.settings()
@@ -874,9 +980,26 @@ class StretchDock(QDockWidget):
         x0, y1 = ext.xMinimum(), ext.yMaximum()
         geotransform = (x0, px, 0, y1, 0, -py)
 
-        def read_strip(r0, n):
+        native = (ow, oh) == (lyr.width(), lyr.height())
+        if self.tern is not None:                       # three channels from their own grids
+            sources = [(rt['layer'].dataProvider(), ch['band'])
+                       for rt, ch in zip(self.chan_rt, self.tern['channels'])]
+            curves, invert = self.ternary_curves(), self.chkInvert.isChecked()
+            same = [tuple(ch['gt'][:2]) + (ch['gt'][3],) == (x0, px, y1) for ch in self.tern['channels']]
+            methods = ['nearest' if native and sm else s['resampling'] for sm in same]
+        else:
+            sources, curves, invert = [(lyr.dataProvider(), self.bandCombo.currentBand())], None, False
+            methods = ['nearest' if native else s['resampling']]
+            nodes, lut = self._nodes_copy(), self.lut_rgba
+
+        def read(prov, band, r0, n):
             sub = QgsRectangle(x0, y1 - (r0 + n) * py, x0 + ow * px, y1 - r0 * py)
             return layers.read_block(prov, band, sub, ow, n)
+
+        def rgba_strip(r0, n):
+            if curves is not None:
+                return ternary.render([read(pv, b, r0, n) for pv, b in sources], curves, invert)
+            return stretch.apply_lut(read(*sources[0], r0, n), nodes, lut)
 
         prog = QProgressDialog('Rendering…', 'Cancel', 0, 1000, self)
         prog.setWindowModality(E(Qt, 'WindowModality.WindowModal'))
@@ -888,23 +1011,30 @@ class StretchDock(QDockWidget):
             QApplication.processEvents()
             return not prog.wasCanceled()
 
-        native = (ow, oh) == (lyr.width(), lyr.height())
-        restore, resampled = layers.provider_resampling(prov, 'nearest' if native else s['resampling'])
+        restores = [layers.provider_resampling(pv, m) for (pv, _), m in zip(sources, methods)]
+        resampled = all(ok for _, ok in restores)
         try:
-            ok = export.run_export(read_strip, ow, oh, geotransform, lyr.crs().toWkt(),
-                                   self._nodes_copy(), self.lut_rgba, s, out, progress)
+            ok = export.run_export(rgba_strip, ow, oh, geotransform, lyr.crs().toWkt(), s, out, progress)
         except Exception as e:
             prog.close()
             QMessageBox.warning(self, TITLE, f'Export failed:\n{e}\n\nTry a different format or compression.')
             return
         finally:
-            restore()
+            for restore, _ in restores:
+                restore()
         prog.close()
         if not ok:
             return
 
         msg = f'Exported {os.path.basename(out)} ({os.path.getsize(out) / 1e6:,.1f} MB, {ow:,} × {oh:,} px)'
-        if s.get('colourbar'):
+        if s.get('colourbar') and self.tern is not None:
+            bar_path = os.path.splitext(out)[0] + '_legend.' + colourbar_settings()['fmt']
+            try:
+                legend.save_ternary(bar_path, self.channel_names(), self.chkInvert.isChecked())
+                msg += f' + {os.path.basename(bar_path)}'
+            except Exception as e:
+                msg += f' (legend failed: {e})'
+        elif s.get('colourbar'):
             bar_settings = colourbar_settings()
             bar_path = os.path.splitext(out)[0] + '_colourbar.' + bar_settings['fmt']
             try:
@@ -912,8 +1042,210 @@ class StretchDock(QDockWidget):
                 msg += f' + {os.path.basename(bar_path)}'
             except Exception as e:
                 msg += f' (colour bar failed: {e})'
-        if not native and not resampled:
+        if not resampled:
             msg += " — this layer's provider can't resample, so nearest neighbour was used"
         self.iface.messageBar().pushSuccess(TITLE, msg)
         if s['add_to_map']:
             self.iface.addRasterLayer(out, os.path.splitext(os.path.basename(out))[0])
+
+    # ================================================================ ternary (RGB) images
+    def set_ternary_mode(self, on):
+        """Show the channel buttons instead of the band and colour ramp choices."""
+        if not on:
+            self.tern, self.chan_rt = None, []
+        for wdg in (self.lblBand, self.bandCombo, self.lblRamp, self.rampBtn):
+            wdg.setVisible(not on)
+        self.chanBar.setVisible(on)
+        self.btnBar.setText('Ternary legend…' if on else 'Colour bar…')
+        self.btnBar.setToolTip('Export a triangle legend with the channel names (PNG, SVG or PDF)' if on else
+                               'Export a colour bar / legend for this stretch (PNG, SVG or PDF)')
+
+    def channel_names(self):
+        return [ch.get('name') or ternary.CHANNELS[i] for i, ch in enumerate(self.tern['channels'])]
+
+    def open_ternary(self, tern):
+        """Open a ternary layer: read each channel's grid and show the saved (or red) channel.
+        Like any grid, opening it doesn't restyle it."""
+        self.tern, self.chan_rt, missing = tern, [], []
+        vrt_dir = os.path.dirname(self.layer.source().split('|')[0])
+        for ch in tern['channels']:
+            rt = {'layer': None, 'sample': None, 'history': ([], -1)}
+            path = ch.get('path', '')
+            if not os.path.isfile(path) and ch.get('relpath'):      # project moved: try beside the VRT
+                path = os.path.normpath(os.path.join(vrt_dir, ch['relpath']))
+            try:
+                rt['layer'] = layers.open_grid(path, ch.get('name', ''))
+                rt['sample'] = layers.sample_band(rt['layer'], ch['band'], SAMPLE_MAX)
+            except Exception as e:
+                missing.append(f"{ch.get('name', '?')}: {e}")
+            self.chan_rt.append(rt)
+        self.set_ternary_mode(True)
+        _set_quiet(self.chkInvert, tern.get('invert', False))
+        for i, name in enumerate(self.channel_names()):
+            short = name if len(name) <= 18 else name[:17] + '…'
+            self.chanBtn[i].setText(f'{ternary.CHANNELS[i][0]}: {short}')
+            self.chanBtn[i].setToolTip(f'Edit the {ternary.CHANNELS[i].lower()} channel: {name}')
+        if missing:
+            QMessageBox.warning(self, TITLE, 'Could not read these ternary channels:\n' + '\n'.join(missing))
+        self.load_channel(min(2, max(0, int(tern.get('active', 0)))), stash=False)
+
+    def load_channel(self, i, stash=True):
+        """Edit channel i (0 red, 1 green, 2 blue) of the ternary layer."""
+        if self.tern is None:
+            return
+        if stash and self.chan_rt:               # keep this channel's undo history
+            self.chan_rt[self.chan]['history'] = (self.history, self.hpos)
+        self.chan = i
+        _set_quiet(self.chanBtn[i], True)
+        rt, ch = self.chan_rt[i], self.tern['channels'][i]
+        self.update_lut()
+        if rt['sample'] is None:
+            self.sample = None
+            self.curve.set_sample(None)
+            self.curve.set_nodes([])
+            self.reset_history()
+            return
+        st = ch.get('state') or {}
+        self._open_sample(rt['sample'], st, st.get('display', {}), history=rt['history'])
+        self.tern['active'] = i
+
+    def on_invert(self, on):
+        if self.tern is None:
+            return
+        self.tern['invert'] = on
+        self.update_lut()
+        self.save_state()
+        self.apply()
+
+    def ternary_curves(self):
+        """The three channels' curves, with the one being edited taken from the editor."""
+        curves = []
+        for i, ch in enumerate(self.tern['channels']):
+            nodes = self.curve.nodes if i == self.chan else (ch.get('state') or {}).get('nodes', [])
+            curves.append([list(n) for n in nodes] if len(nodes) >= 2 else [[0.0, 0.0], [1.0, 1.0]])
+        return curves
+
+    def _write_vrt(self, path, tern, curves, wkt):
+        chans = tern['channels']
+        target = ternary.common_grid([{'gt': ch['gt'], 'w': ch['w'], 'h': ch['h']} for ch in chans])
+        sources = [dict(ch, wkt=wkt) for ch in chans]
+        text = ternary.vrt_xml(target, sources, curves, tern.get('invert', False), settings=tern, vrt_path=path)
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(tmp, path)                    # never leave a half-written VRT for QGIS to read
+
+    def write_ternary(self):
+        """Rewrite the ternary VRT with the current curves and redraw it."""
+        path = self.layer.source().split('|')[0]
+        try:
+            self._write_vrt(path, self.tern, self.ternary_curves(), self.layer.crs().toWkt())
+        except Exception as e:
+            self.iface.messageBar().pushWarning(TITLE, f'Could not update {os.path.basename(path)}: {e}')
+            return
+        r = self.layer.renderer()
+        if r is None or r.type() != 'multibandcolor':    # e.g. restyled by hand: back to RGB
+            styling.apply_ternary(self.layer)
+        styling.reload_layer(self.layer)
+
+    def guess_ternary(self):
+        """Fill the red, green and blue choices with layers named like K, Th and U."""
+        rasters = [lyr for lyr in QgsProject.instance().mapLayers().values()
+                   if isinstance(lyr, QgsRasterLayer) and state.load_ternary(lyr) is None]
+        found = ternary.guess_channels([lyr.name() for lyr in rasters])
+        if any(i is not None for i in found):
+            for i, k in enumerate(found):
+                if k is not None:
+                    self.ternLayer[i].setLayer(rasters[k])
+            return
+        multi = (self.layer if self.layer is not None and self.tern is None and self.layer.bandCount() >= 3
+                 else None)
+        if multi is not None:                    # one multi-band grid: use its first three bands
+            for i in range(3):
+                self.ternLayer[i].setLayer(multi)
+                self.ternBand[i].setBand(i + 1)
+            return
+        self.iface.messageBar().pushInfo(TITLE, 'No layers named like K, Th or U (or potassium, thorium, '
+                                                'uranium) found. Pick the three grids yourself.')
+
+    def create_ternary(self):
+        """Build a ternary VRT from the three chosen grids, add it to the map and open it."""
+        picks = [(lc.currentLayer(), bc.currentBand()) for lc, bc in zip(self.ternLayer, self.ternBand)]
+        if any(lyr is None or band is None or band < 1 for lyr, band in picks):
+            QMessageBox.information(self, TITLE, 'Choose a grid and band for red, green and blue first.')
+            return
+        try:
+            infos = [layers.grid_info(lyr, band) for lyr, band in picks]
+        except ValueError as e:
+            QMessageBox.warning(self, TITLE, str(e))
+            return
+        crs = {i['authid'] or i['wkt'] for i in infos}
+        if len(crs) > 1:
+            QMessageBox.warning(self, TITLE, 'The three grids must be in the same coordinate reference system '
+                                             '(reproject them first).')
+            return
+        try:
+            ternary.common_grid([{'gt': i['gt'], 'w': i['w'], 'h': i['h']} for i in infos])
+        except ValueError as e:
+            QMessageBox.warning(self, TITLE, f'Can\'t combine these grids: {e}.')
+            return
+
+        names = [i['name'] for i in infos]
+        stem = '_'.join(re.sub(r'[^A-Za-z0-9]+', '', n.split('(')[0])[:12] or c for n, c in zip(names, 'RGB'))
+        default = os.path.join(os.path.dirname(infos[0]['path']), f'{stem}_ternary.vrt')
+        path, _ = QFileDialog.getSaveFileName(self, 'Save ternary layer', default, 'GDAL virtual raster (*.vrt)')
+        if not path:
+            return
+        if not path.lower().endswith('.vrt'):
+            path += '.vrt'
+
+        channels = []
+        for (lyr, band), info in zip(picks, infos):
+            try:
+                s = layers.sample_band(lyr, band, SAMPLE_MAX)
+            except Exception as e:
+                QMessageBox.warning(self, TITLE, f'Could not read {info["name"]}: {e}')
+                return
+            lo, hi = stretch.percent_clip(s, *TERNARY_CLIP)
+            ch = {k: info[k] for k in ('path', 'band', 'name', 'w', 'h', 'gt', 'nodata')}
+            try:
+                ch['relpath'] = os.path.relpath(info['path'], os.path.dirname(os.path.abspath(path)))
+            except ValueError:
+                pass
+            ch['state'] = {
+                'nodes': stretch.preset_linear(s, lo, hi, DEFAULT_POINTS['linear']),
+                'preset': 'linear', 'edited': False, 'preset_points': dict(DEFAULT_POINTS),
+                'clip': {'mode': 'pct', 'lower': TERNARY_CLIP[0], 'upper': TERNARY_CLIP[1], 'lo': lo, 'hi': hi},
+                'view': None, 'view_mode': 'data', 'display': {'log_counts': False, 'log_x': False},
+                'mirror': {'on': False, 'centre': 0.0, 'slope': 1.0}}
+            channels.append(ch)
+        tern = {'version': 1, 'channels': channels, 'invert': False, 'active': 0}
+        try:
+            self._write_vrt(path, tern, [c['state']['nodes'] for c in channels], infos[0]['wkt'])
+        except Exception as e:
+            QMessageBox.warning(self, TITLE, f'Could not save {path}:\n{e}')
+            return
+
+        short = [re.sub(r'\s*\(.*\)\s*$', '', n) or n for n in names]
+        lyr = QgsRasterLayer(path, 'Ternary ' + ' / '.join(short))
+        if not lyr.isValid():
+            QMessageBox.warning(self, TITLE, f'QGIS could not open {path}.')
+            return
+        state.save_ternary(lyr, tern)
+        styling.apply_ternary(lyr)
+        QgsProject.instance().addMapLayer(lyr)
+        self.layerCombo.setLayer(lyr)            # opens it here (and in the Layers panel)
+
+    def export_ternary_legend(self):
+        path, _ = QFileDialog.getSaveFileName(self, 'Save ternary legend', self._default_name('_legend.png'),
+                                              'PNG (*.png);;SVG (*.svg);;PDF (*.pdf)')
+        if not path:
+            return
+        if os.path.splitext(path)[1].lower() not in ('.png', '.svg', '.pdf'):
+            path += '.png'
+        try:
+            legend.save_ternary(path, self.channel_names(), self.chkInvert.isChecked())
+        except Exception as e:
+            QMessageBox.warning(self, TITLE, f'Could not save the legend:\n{e}')
+            return
+        self.iface.messageBar().pushSuccess(TITLE, f'Saved legend {os.path.basename(path)}')

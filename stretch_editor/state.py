@@ -5,6 +5,7 @@ with the QGIS project and with saved .qml styles)."""
 import json
 
 PROPERTY = 'stretchEditor/state'
+TERNARY_PROPERTY = 'stretchEditor/ternary'
 
 
 def load(layer):
@@ -32,3 +33,27 @@ def save(layer, state):
         state = dict(state, ramp={})
         text = json.dumps(state)
     layer.setCustomProperty(PROPERTY, text)
+
+
+def load_ternary(layer):
+    """Ternary settings for a layer: from the project, else from the metadata embedded in its
+    VRT (e.g. a ternary VRT added to a new project), else None."""
+    try:
+        d = json.loads(layer.customProperty(TERNARY_PROPERTY, '') or 'null')
+        if isinstance(d, dict) and len(d.get('channels', [])) == 3:
+            return d
+    except Exception:
+        pass
+    try:
+        path = layer.source().split('|')[0]
+        if path.lower().endswith('.vrt'):
+            from .core import ternary
+            with open(path, encoding='utf-8') as f:
+                return ternary.read_settings(f.read())
+    except Exception:
+        pass
+    return None
+
+
+def save_ternary(layer, settings):
+    layer.setCustomProperty(TERNARY_PROPERTY, json.dumps(settings))

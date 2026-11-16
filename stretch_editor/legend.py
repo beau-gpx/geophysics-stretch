@@ -137,3 +137,91 @@ def save(path, s, title, nodes, colours):
     p = QPainter(device)
     paint(p, s, info, colours, w, h, labels, head)
     p.end()
+
+
+# ------------------------------------------------------------- ternary legend
+TRI_SIZE = 240      # triangle width in logical pixels
+
+
+def _tri_layout(labels, title, font_px):
+    f = QFont()
+    f.setPixelSize(font_px)
+    fb = QFont(f)
+    fb.setBold(True)
+    fm, fmb = QFontMetricsF(f), QFontMetricsF(fb)
+    side = max(fm.horizontalAdvance(t) for t in labels[1:]) / 2 + PAD
+    head_h = fmb.height() + 6 if title else 0
+    w = max(TRI_SIZE + 2 * side, fmb.horizontalAdvance(title) + 2 * PAD if title else 0)
+    h = PAD + head_h + fm.height() + 4 + TRI_SIZE * 0.866 + 4 + fm.height() + PAD
+    return int(math.ceil(w)), int(math.ceil(h)), f, fb, fm, fmb, head_h
+
+
+def paint_ternary(p, labels, invert, title, font_px, white_bg, w, h):
+    """Draw the ternary triangle with the channel names at its corners (red top,
+    green bottom-left, blue bottom-right)."""
+    import numpy as np
+
+    from .core import ternary
+    _, _, f, fb, fm, fmb, head_h = _tri_layout(labels, title, font_px)
+    if white_bg:
+        p.fillRect(QRectF(0, 0, w, h), QColor(255, 255, 255))
+    p.setRenderHint(E(QPainter, 'RenderHint.Antialiasing'), True)
+    p.setRenderHint(E(QPainter, 'RenderHint.TextAntialiasing'), True)
+    p.setRenderHint(E(QPainter, 'RenderHint.SmoothPixmapTransform'), True)
+    p.setPen(INK)
+    y = PAD
+    if title:
+        p.setFont(fb)
+        p.drawText(QPointF((w - fmb.horizontalAdvance(title)) / 2, y + fmb.ascent()), title)
+        y += head_h
+    p.setFont(f)
+    p.drawText(QPointF((w - fm.horizontalAdvance(labels[0])) / 2, y + fm.ascent()), labels[0])
+    y += fm.height() + 4
+
+    n = TRI_SIZE * 2                       # render at 2x for smooth edges
+    rgba, (top, bl, br) = ternary.triangle(n, invert)
+    img = QImage(np.ascontiguousarray(rgba).tobytes(), n, n, 4 * n, E(QImage, 'Format.Format_RGBA8888')).copy()
+    x0 = (w - TRI_SIZE) / 2
+    oy = y - (TRI_SIZE - TRI_SIZE * 0.866) / 2         # the triangle sits vertically centred in its square
+    p.drawImage(QRectF(x0, oy, TRI_SIZE, TRI_SIZE), img)
+    base = oy + bl[1] / 2
+    ty = base + 4 + fm.ascent()
+    p.drawText(QPointF(x0 - fm.horizontalAdvance(labels[1]) / 2, ty), labels[1])
+    p.drawText(QPointF(x0 + TRI_SIZE - fm.horizontalAdvance(labels[2]) / 2, ty), labels[2])
+
+
+def save_ternary(path, labels, invert=False, title='', font_px=14, white_bg=True, scale=2):
+    """Write a ternary legend to PNG, SVG or PDF (chosen by the file extension)."""
+    w, h = _tri_layout(labels, title, font_px)[:2]
+    ext = path.lower().rsplit('.', 1)[-1]
+    if ext == 'png':
+        img = QImage(w * scale, h * scale, E(QImage, 'Format.Format_ARGB32_Premultiplied'))
+        img.fill(QColor(0, 0, 0, 0))
+        dpm = int(round(96 * scale / 0.0254))
+        img.setDotsPerMeterX(dpm)
+        img.setDotsPerMeterY(dpm)
+        p = QPainter(img)
+        p.scale(scale, scale)
+        paint_ternary(p, labels, invert, title, font_px, white_bg, w, h)
+        p.end()
+        if not img.save(path, 'PNG'):
+            raise OSError(f'Could not write {path}')
+        return
+    if ext == 'svg':
+        from qgis.PyQt.QtSvg import QSvgGenerator
+        device = QSvgGenerator()
+        device.setFileName(path)
+        device.setSize(QSize(w, h))
+        device.setViewBox(QRect(0, 0, w, h))
+        device.setResolution(96)
+        device.setTitle(title or 'Ternary legend')
+    elif ext == 'pdf':
+        device = QPdfWriter(path)
+        device.setResolution(96)
+        device.setPageSize(QPageSize(QSizeF(w * 72.0 / 96.0, h * 72.0 / 96.0), E(QPageSize, 'Unit.Point')))
+        device.setPageMargins(QMarginsF(0, 0, 0, 0))
+    else:
+        raise ValueError('use a .png, .svg or .pdf file name')
+    p = QPainter(device)
+    paint_ternary(p, labels, invert, title, font_px, white_bg, w, h)
+    p.end()

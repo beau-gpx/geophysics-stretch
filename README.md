@@ -20,6 +20,8 @@ a georeferenced image with a transparent collar and a matching colour bar.
 - **Image export:** Cloud-Optimised GeoTIFF, GeoTIFF, JPEG2000, PNG or JPEG. Choose compression,
   lossy or lossless, quality, transparency, and output cell size.
 - **Colour bar export:** PNG, SVG or PDF, with a live preview.
+- **Ternary (RGB) images:** e.g. radiometric K, Th and U as red, green and blue, each channel with its
+  own curve, presets and clip limits, plus a triangle legend.
 - **Layers panel sync:** the grid you're editing is selected and scrolled into view.
 
 ## Install
@@ -98,6 +100,34 @@ and negative values then get mirrored colours.
 - **Save style…** writes a QGIS `.qml` style you can load onto other layers.
 - The layer's legend in print layouts shows the stretch as a continuous ramp.
 
+### Ternary images (RGB)
+Combine three grids as red, green and blue, e.g. radiometric potassium, thorium and uranium.
+
+1. Open **Ternary image (RGB)** near the top of the panel.
+2. Pick the grid (and band) for **Red**, **Green** and **Blue**, or click **Guess K / Th / U** to pick
+   layers named like K, Th and U (or potassium, thorium, uranium). For one multi-band grid, select it
+   first; Guess then uses its first three bands.
+3. Click **Create ternary layer…** and choose where to save it. It's a small `.vrt` file that points at
+   your grids; nothing is copied. The layer is added to the map and opened in the editor.
+
+Each channel starts as **Linear** from the 1 % to 99 % percentiles. Use the **R / G / B** buttons to
+choose the channel to edit: it gets its own histogram, curve, presets, clip limits, mirror settings
+and undo. The strip under the histogram shows that channel's colour. **Invert (CMY)** swaps to cyan,
+magenta and yellow on white, which suits printing.
+
+- A pixel with nodata in any of the three grids is transparent.
+- The grids must share a coordinate system. They can have different extents or cell sizes: the
+  ternary layer covers all three at the finest cell size.
+- The curves are stored in the `.vrt` itself, so it shows the same in any GIS that reads GDAL
+  virtual rasters, with or without this plugin. Keep it with (or near) the grids: it finds them by
+  a relative path.
+- **Export image…** works as for a single grid. **Ternary legend…** (in place of Colour bar…) saves a
+  triangle legend with the channel names as PNG, SVG or PDF, and *Also save a colour bar* in the
+  export dialog saves it beside the image.
+
+The sample data has potassium but no thorium or uranium grids, so to try it, use the three sample
+grids as stand-ins.
+
 ## Exporting
 
 ### Image
@@ -144,12 +174,12 @@ coordinates, and are free to use for any purpose (CC0). They live in `stretch_ed
 ```
 stretch_editor/          the plugin (this folder is what goes in the ZIP)
   plugin.py              toolbar button and menu entry
-  core/                  pure maths: curves and presets, colour bar labels, export options
+  core/                  pure maths: curves and presets, colour bar labels, export options, ternary VRTs
   ui/                    the panel, curve editor and dialogs
   layers.py              reading raster data and layer helpers
   styling.py             colour ramps and applying a curve as a layer style
   state.py               settings saved with each layer
-  legend.py              drawing the colour bar
+  legend.py              drawing the colour bar and the ternary legend
   compat.py              QGIS 3 / QGIS 4 compatibility helpers
   sample_data/           synthetic test grids (GeoTIFF)
 tests/                   unit tests for core/ and the sample data (no QGIS needed)

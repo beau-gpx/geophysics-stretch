@@ -7,7 +7,14 @@ The README is the user guide; CHANGELOG.md records every version and the reasons
 ## Layout
 - `stretch_editor/` is the plugin package and exactly what ships in the ZIP.
   - `core/` pure Python + numpy, no QGIS/Qt imports (curve maths, presets, mirror mode,
-    colour bar labels, export options and the GDAL export loop). Keep it that way so it stays testable.
+    colour bar labels, export options and the GDAL export loop, ternary VRTs). Keep it that way so it
+    stays testable.
+  - Ternary images (`core/ternary.py`): a `.vrt` with three Byte bands reading the source grids through
+    `<LUT>`s that hold each channel's curve (outputs 1..255, 0 = nodata, so nodata in any channel is
+    transparent). The dock rewrites the VRT on each edit and reloads the layer. Settings are saved as
+    the `stretchEditor/ternary` layer property and embedded in the VRT metadata (`SDP_IMAGING_TERNARY`),
+    so a VRT added to a new project can still be edited. In ternary mode `_open_sample` loads one
+    channel at a time; each channel keeps its own state and undo history.
   - `ui/dock.py` the panel (layout in `_build_ui`, signals in `_connect`, then grouped handlers);
     `ui/curve_widget.py` the histogram/curve editor; `ui/export_dialog.py`, `ui/colourbar_dialog.py`.
   - `layers.py` raster reading and layer helpers; `styling.py` ramps and applying a curve as a
@@ -51,7 +58,7 @@ Plain descriptive messages, optionally a `Co-Authored-By:` line. Do not add `Cla
 (they were deliberately removed from the history).
 
 ## Later list
-Features Beau wants eventually. Not started; test the current release in a real QGIS first.
+Features Beau wants eventually. Not started.
 
 1. **Save a style next to the grid on image export.** Exporting an image usually means the stretch
    is final, so also write `<grid>.qml` beside the source grid. QGIS applies a same-named .qml
@@ -61,14 +68,8 @@ Features Beau wants eventually. Not started; test the current release in a real 
    renamed to `<grid>.tif` beside `<grid>.ers`); decide whether to overwrite, back up or ask about an
    existing .qml; warn on read-only folders; grey out for sources with no folder (zip, GeoPackage,
    web services). Doesn't break "opening never restyles": QGIS applies the .qml, not the plugin.
-2. **Ternary (RGB) images**, e.g. radiometrics K, Th, U as red, green, blue. Pick three single-band
-   layers (or one multi-band layer); presets K/Th/U and inverted (CMY). Combine grids on different
-   extents or cells through a GDAL VRT. Per-channel histogram, clip limits, presets and curve via an
-   R/G/B selector on the curve editor. Phase 1: linear + percentile clip per channel with QGIS's
-   multiband colour renderer (native, live, saved in .qml). Phase 2: per-channel curves and
-   hist. equalise, rendered by the plugin (extend `core/export.run_export` to three channels).
-   Nodata in any channel becomes transparent. Triangle ternary legend export. Maybe ratio channels
-   (Th/K) and hillshade blending.
+2. **Ternary extras** (ternary images themselves are done in v2.2.0): ratio channels (e.g. Th/K) and
+   hillshade blending.
 3. **Space-saving single-band image export**, like ER Mapper's black-and-white option. An export
    choice of colour (RGB, current) or greyscale: write the stretch position as one 8-bit band
    (0–255, nodata via alpha/mask) instead of three, roughly a third of the data before compression;

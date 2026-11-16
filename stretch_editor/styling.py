@@ -7,6 +7,7 @@ from qgis.core import (
     QgsColorRampShader,
     QgsGradientColorRamp,
     QgsGradientStop,
+    QgsMultiBandColorRenderer,
     QgsRasterShader,
     QgsSingleBandPseudoColorRenderer,
 )
@@ -103,3 +104,23 @@ def apply_stretch(layer, band, nodes, colours, ramp=None):
         layer.emitStyleChanged()
     except Exception:
         pass
+
+
+def apply_ternary(layer):
+    """Show a ternary VRT as RGB. The curves are already in its lookup tables, so the bands
+    are drawn as they are (no contrast enhancement); 0 is nodata, so gaps are transparent."""
+    layer.setRenderer(QgsMultiBandColorRenderer(layer.dataProvider(), 1, 2, 3))
+    layer.triggerRepaint()
+    try:
+        layer.emitStyleChanged()
+    except Exception:
+        pass
+
+
+def reload_layer(layer):
+    """Re-read a layer's file after it was rewritten (a ternary VRT with new curves)."""
+    try:
+        layer.dataProvider().reloadData()
+    except Exception:
+        pass
+    layer.triggerRepaint()
