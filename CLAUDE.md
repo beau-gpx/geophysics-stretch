@@ -47,6 +47,15 @@ Load sample data) or say clearly that it hasn't been run in QGIS.
 - UI text is plain English, Australian spelling (colour, normalise).
 
 ## Releasing
+Versions are MAJOR.MINOR.PATCH: patch (2.2.1) for fixes and small tweaks to existing features,
+minor (2.3.0) for a new feature, major (3.0.0) only for a change that breaks existing users (e.g.
+old projects losing their stretches). The number only matters once a build is released (GitHub
+release, plugins.qgis.org, or sent to colleagues): changes made before then belong to the
+unreleased version, so fold them into its CHANGELOG entry rather than bumping. Check with
+`gh api repos/beau-gpx/geophysics-stretch/releases --jq '.[].tag_name'`. After a release, any
+change needs a new number (plugins.qgis.org rejects a version it has seen). Beau installs test
+builds himself; reinstalling the same version number over a test install is fine.
+
 1. Bump `version=` and `changelog=` in `stretch_editor/metadata.txt`; add a CHANGELOG.md entry.
 2. Run the four checks, commit, push to `main`.
 3. Beau creates the GitHub release (tag `vX.Y.Z`, notes, attach the built ZIP) and uploads the same
